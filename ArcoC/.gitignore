@@ -1,0 +1,22 @@
+node_modules/
+database.sqlite
+*.sqlite
+*.log
+.DS_Store
+.env
+.env*.local
+.env.production
+playwright-report/
+test-results/
+.playwright-mcp/
+.next/
+out/
+build/
+coverage/
+extracted_texts*.txt
+
+# Debug / extraction tools (A-14)
+extract_ppt.py
+test_api.js
+tools/
+tests/screenshots/
