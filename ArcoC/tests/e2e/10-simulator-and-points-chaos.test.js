@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { performLogin, resetStudentState } from '../helpers/loginHelper.js';
+import { completeStep } from '../helpers/simulatorHelper.js';
 
 test.describe('Simulator & Reserve Points Chaos Testing', () => {
 
@@ -37,7 +38,8 @@ test.describe('Simulator & Reserve Points Chaos Testing', () => {
       '../../../etc/passwd',
       'DROP TABLE students',
       'm9_s1', // módulo inexistente
-      'm1_s3',
+      'm1_s9', // minijuego inexistente
+      undefined, // `source` es obligatorio
       12345,
       {}
     ];
@@ -55,9 +57,9 @@ test.describe('Simulator & Reserve Points Chaos Testing', () => {
   test('Prevents point farming on already completed interactive modules', async ({ page }) => {
     await performLogin(page, 'student@test.com', 'student123', true);
 
-    // 1. Completar m1_v1 y luego m1_s1 en progreso
-    await page.request.post('http://localhost:5000/api/progress/m1_v1');
-    await page.request.post('http://localhost:5000/api/progress/m1_s1');
+    // 1. Completar m1_v1 y luego m1_s1 (exige una partida terminada en el simulador)
+    await completeStep(page.request, 'm1_v1');
+    await completeStep(page.request, 'm1_s1');
 
     // 2. Intentar ganar puntos reportando source: 'm1_s1'
     const res = await page.request.post('http://localhost:5000/api/add-points', {
@@ -94,24 +96,36 @@ test.describe('Simulator & Reserve Points Chaos Testing', () => {
     expect(overJson.error).toContain('límite máximo permitido de 500');
   });
 
-  test('SimulatorView drops postMessage events from malicious origins', async ({ page }) => {
+  test('SimulatorView drops postMessage events that do not come from its own simulator iframe', async ({ page }) => {
     await performLogin(page, 'student@test.com', 'student123', true);
+    await page.request.post('http://localhost:5000/api/progress/m1_v1');
+    await page.route('**/webgl/**', route => route.abort());
     await page.goto('/course/practice/m1_s1');
 
     const sessionPoints = page.locator('#session-points');
     await expect(sessionPoints).toHaveText('+0');
 
-    // Simular inyección de mensaje desde origen falso
-    await page.evaluate(() => {
-      window.dispatchEvent(new MessageEvent('message', {
-        data: { type: 'C_ARM_SIMULATOR_SCORE', points: 100 },
-        origin: 'https://attacker-fake-domain.xyz'
-      }));
+    let resultCalls = 0;
+    page.on('request', req => {
+      if (req.url().includes('/simulator/attempts/') && req.url().endsWith('/result')) resultCalls++;
     });
 
-    // Los puntos de sesión NO deben haberse alterado
+    // Mensaje con el formato real que emite Unity, pero inyectado desde la propia ventana
+    // y desde un origen falso: ninguno viene del iframe del simulador.
+    await page.evaluate(() => {
+      const payload = {
+        source: 'carm-sim', v: 1, type: 'phase-result',
+        attemptId: '00000000-0000-4000-8000-000000000000', stepId: 'm1_s1', phase: 1,
+        score: 100, maxScore: 100, passed: true, errorCount: 0, doseMsv: 0, timeSeconds: 1
+      };
+      window.dispatchEvent(new MessageEvent('message', { data: payload, origin: 'https://attacker-fake-domain.xyz', source: window }));
+      window.postMessage(payload, '*');
+    });
+
+    // Ni puntos de sesión ni llamadas a la API
     await page.waitForTimeout(500);
     await expect(sessionPoints).toHaveText('+0');
+    expect(resultCalls).toBe(0);
   });
 
 });

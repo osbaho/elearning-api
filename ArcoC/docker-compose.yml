@@ -48,6 +48,9 @@ services:
         NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL:-http://localhost:5000}
     container_name: carm_frontend
     restart: unless-stopped
+    environment:
+      # client/src/proxy.js valida la cookie de sesión con el mismo secreto que firma el backend
+      JWT_SECRET: ${JWT_SECRET}
     ports:
       - "3000:3000"
     depends_on:

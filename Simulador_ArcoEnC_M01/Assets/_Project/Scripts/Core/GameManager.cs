@@ -109,22 +109,6 @@ namespace CArmSimulator.Core
             OnSessionCompleted?.Invoke(CurrentSession);
         }
 
-        /// <summary>
-        /// Relays single phase completion notification to ScormBridge / Web host.
-        /// </summary>
-        public void NotifyPhaseCompletedToWeb(int phaseIndex, float score, float doseMsv, float timeSeconds)
-        {
-            scormService ??= ScormBridge.Instance;
-            if (ScormBridge.Instance != null)
-            {
-                ScormBridge.Instance.NotifyPhaseCompletedToWeb(phaseIndex, score, doseMsv, timeSeconds);
-            }
-            else
-            {
-                Debug.Log($"[GameManager] ScormBridge not present, logged phase {phaseIndex} completion: score={score:F1}, dose={doseMsv:F2} mSv, time={timeSeconds:F1}s");
-            }
-        }
-
         private void OnApplicationQuit()
         {
             scormService ??= ScormBridge.Instance;

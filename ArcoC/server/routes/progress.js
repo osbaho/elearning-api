@@ -1,32 +1,25 @@
 import express from 'express';
 import { run, get, getPgPool } from '../config/db.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { isCourseStep, previousStepOf } from '../config/curriculum.js';
+import { getSimulatorEntry } from '../config/simulatorCatalog.js';
 
 const router = express.Router();
-
-const ALL_STEPS = [
-  'm1_v1', 'm1_s1', 'm1_v2', 'm1_s2', 'm1_vr',
-  'm2_v1', 'm2_s1', 'm2_v2', 'm2_s2', 'm2_vr',
-  'm3_v1', 'm3_s1', 'm3_v2', 'm3_s2', 'm3_vr',
-  'm4_v1', 'm4_s1', 'm4_v2', 'm4_s2', 'm4_vr',
-  'm5_v1', 'm5_s1', 'm5_v2', 'm5_s2', 'm5_vr'
-];
 
 // POST /api/progress/:moduleId
 router.post('/:moduleId', authenticateToken, async (req, res) => {
   try {
     const { moduleId } = req.params;
     const studentId = req.user.id;
-    const stepIndex = ALL_STEPS.indexOf(moduleId);
-    
+
     // El módulo 'exam' NO puede marcarse manualmente; se registra exclusivamente en /api/submit-exam al aprobar con >= 90%
-    if (stepIndex === -1) {
+    if (!isCourseStep(moduleId)) {
       return res.status(400).json({ error: 'Módulo inválido o no permitido para marcado directo.' });
     }
 
     // Validación de secuencia: el paso anterior debe estar completado
-    if (stepIndex > 0) {
-      const prevStep = ALL_STEPS[stepIndex - 1];
+    const prevStep = previousStepOf(moduleId);
+    if (prevStep) {
       const prevDone = await get(
         'SELECT id FROM course_progress WHERE student_id = ? AND module_id = ? AND status = ?',
         [studentId, prevStep, 'completed']
@@ -34,6 +27,19 @@ router.post('/:moduleId', authenticateToken, async (req, res) => {
       if (!prevDone) {
         return res.status(403).json({
           error: `Secuencia requerida: Debes completar el paso previo (${prevStep}) antes de avanzar a ${moduleId}.`
+        });
+      }
+    }
+
+    // Los minijuegos con contenido en el simulador exigen al menos una partida terminada
+    if (getSimulatorEntry(moduleId)) {
+      const played = await get(
+        `SELECT id FROM simulator_attempts WHERE student_id = ? AND step_id = ? AND status = 'completed' LIMIT 1`,
+        [studentId, moduleId]
+      );
+      if (!played) {
+        return res.status(403).json({
+          error: 'Debes terminar al menos una partida en el simulador antes de finalizar este minijuego.'
         });
       }
     }

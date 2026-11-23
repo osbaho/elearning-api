@@ -1,18 +1,44 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
 /**
- * SimulatorView — Reusable simulator/practice module component.
+ * SimulatorView — página de práctica de un minijuego (paso mX_sY del curso).
+ *
+ * Contrato con el simulador Unity WebGL (servido en el mismo origen, /webgl/):
+ *   1. POST /api/simulator/attempts { stepId }        → { attemptId, scene, phase }
+ *   2. <iframe src="/webgl/index.html?attempt=…&step=…&scene=…&phase=…">
+ *   3. Unity → postMessage { source: 'carm-sim', v: 1, type: 'phase-result', attemptId, stepId, phase,
+ *                            score, maxScore, passed, errorCount, doseMsv, timeSeconds }
+ *   4. Esta página valida el mensaje y lo envía a POST /api/simulator/attempts/:id/result.
+ *      La API decide los puntos y la página se los confirma a Unity
+ *      ({ source: 'carm-host', v: 1, type: 'phase-ack' | 'phase-ack-error', … }).
  *
  * Props:
- *  - moduleId  {string}  e.g. 'simulator' | 'simulator2'
- *  - title     {string}  Page heading
- *  - subtitle  {string}  Optional subtitle for the hero area
+ *  - moduleId  {string}  clave del paso práctico, p. ej. 'm1_s1'
+ *  - title     {string}  título de la página
+ *  - subtitle  {string}  subtítulo opcional
  */
+const WEBGL_ENTRY = '/webgl/index.html';
+const IS_DEV = process.env.NODE_ENV !== 'production';
+const LOADING_FALLBACK_MS = 60000;
+
+const TIER_INFO = {
+  perfect: { title: '⭐ Fase perfecta', detail: 'Aprobaste con 70 % o más y sin errores.', className: 'text-green' },
+  intermediate: { title: '🏅 Fase aprobada con errores', detail: 'Aprobaste con 70 % o más, pero con errores.', className: 'text-amber' },
+  failed: { title: '❌ Fase no aprobada', detail: 'No alcanzaste el 70 % o se agotó el tiempo.', className: 'text-muted' },
+};
+
+// Resultados sintéticos para probar el flujo completo sin el build de Unity (solo desarrollo)
+const SIMULATED_RESULTS = [
+  { kind: 'perfect', label: '⭐ Simular partida perfecta', className: 'btn btn-gold', result: { score: 100, maxScore: 100, passed: true, errorCount: 0 } },
+  { kind: 'intermediate', label: '🏅 Simular partida con errores', className: 'btn btn-secondary', result: { score: 85, maxScore: 100, passed: true, errorCount: 2 } },
+  { kind: 'failed', label: '❌ Simular partida no aprobada', className: 'btn btn-secondary', result: { score: 40, maxScore: 100, passed: false, errorCount: 5 } },
+];
+
 const MODULE_GUIDE_ASSETS = {
   m1: {
     title: 'Atlas Radiológico: Densidades y Diagnóstico Oculto',
@@ -61,93 +87,235 @@ const MODULE_GUIDE_ASSETS = {
   }
 };
 
+function buildSimulatorUrl(attempt, stepId) {
+  const params = new URLSearchParams({
+    attempt: attempt.attemptId,
+    step: stepId,
+    scene: attempt.scene,
+    phase: String(attempt.phase),
+  });
+  return `${WEBGL_ENTRY}?${params.toString()}`;
+}
+
 export default function SimulatorView({ moduleId, title, subtitle }) {
   const { user, setUser } = useAuth();
   const { addToast } = useToast();
+
+  // Estado del paso según la API: null = cargando; { available: false } = sin contenido Unity
+  const [stepInfo, setStepInfo] = useState(null);
+  // ¿Existe el build WebGL en /webgl? 'checking' | 'available' | 'missing'
+  const [buildState, setBuildState] = useState('checking');
+  const [attempt, setAttempt] = useState(null);
+  // 'idle' | 'starting' | 'loading' | 'playing' | 'submitting' | 'finished' | 'error'
+  const [attemptState, setAttemptState] = useState('idle');
+  const [lastResult, setLastResult] = useState(null);
+  const [completedAttempts, setCompletedAttempts] = useState(0);
   const [sessionAttempts, setSessionAttempts] = useState(0);
   const [sessionPoints, setSessionPoints] = useState(0);
   const [status, setStatus] = useState('Esperando...');
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [selectedImage, setSelectedImage] = useState(null);
+
+  const iframeRef = useRef(null);
+  const attemptRef = useRef(null);
+  const submittedAttemptsRef = useRef(new Set());
 
   const currentPoints = user?.reservePoints || 0;
   const maxPoints = 500;
   const progressPercent = Math.min((currentPoints / maxPoints) * 100, 100);
-  const isCompleted = user?.completedModules?.includes(moduleId);
-  const [showConfirm, setShowConfirm] = useState(false);
-  const [selectedImage, setSelectedImage] = useState(null);
+  const isCompleted = Boolean(user?.completedModules?.includes(moduleId) || stepInfo?.stepCompleted);
+  const hasSimulator = stepInfo?.available === true;
+  const canFinish = !hasSimulator || completedAttempts > 0;
 
   const modKey = moduleId?.slice(0, 2) || 'm1';
   const guideData = MODULE_GUIDE_ASSETS[modKey];
 
-  const simulateScore = useCallback(async (points) => {
-    if (isCompleted) {
-      addToast('Ya has finalizado el minijuego. No puedes sumar más puntos.', 'warning');
-      return;
-    }
-
-    setStatus('Guardando...');
+  const api = useCallback(async (path, options = {}) => {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
+      credentials: 'include',
+      ...options,
+      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    });
+    let data = null;
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/add-points`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        credentials: 'include',
-        body: JSON.stringify({ points, source: moduleId })
+      data = await res.json();
+    } catch {
+      // respuesta sin cuerpo JSON
+    }
+    return { ok: res.ok, status: res.status, data };
+  }, []);
+
+  // Estado del paso y disponibilidad del build WebGL.
+  // La página monta este componente con key={moduleId}, así que cada práctica empieza con estado limpio.
+  useEffect(() => {
+    let cancelled = false;
+
+    api(`/simulator/steps/${moduleId}`)
+      .then(({ ok, status: httpStatus, data }) => {
+        if (cancelled) return;
+        if (ok) {
+          setStepInfo(data);
+          setCompletedAttempts(data.completedAttempts || 0);
+        } else {
+          setStepInfo({ available: false, error: httpStatus === 404 ? null : data?.error || `Error ${httpStatus}` });
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setStepInfo({ available: false, error: err.message });
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        setSessionAttempts(prev => prev + 1);
-        setSessionPoints(prev => prev + points);
-        setStatus('Puntos guardados');
-        setUser(prev => ({ ...prev, reservePoints: data.reservePoints }));
-      } else {
-        const errorText = await res.text();
-        setStatus('Error al guardar');
-        addToast(`Error al guardar: ${res.status} - ${errorText}`, 'error');
+    fetch(WEBGL_ENTRY, { method: 'HEAD', cache: 'no-store' })
+      .then((res) => { if (!cancelled) setBuildState(res.ok ? 'available' : 'missing'); })
+      .catch(() => { if (!cancelled) setBuildState('missing'); });
+
+    return () => { cancelled = true; };
+  }, [moduleId, api]);
+
+  const postToSimulator = useCallback((message) => {
+    const frameWindow = iframeRef.current?.contentWindow;
+    if (frameWindow) {
+      frameWindow.postMessage({ source: 'carm-host', v: 1, ...message }, window.location.origin);
+    }
+  }, []);
+
+  const startAttempt = useCallback(async () => {
+    if (isCompleted) {
+      addToast('Ya finalizaste este minijuego.', 'warning');
+      return null;
+    }
+    setAttemptState('starting');
+    setLastResult(null);
+    setStatus('Preparando partida...');
+    try {
+      const { ok, status: httpStatus, data } = await api('/simulator/attempts', {
+        method: 'POST',
+        body: JSON.stringify({ stepId: moduleId }),
+      });
+      if (!ok) {
+        setAttemptState('error');
+        setStatus('No se pudo iniciar');
+        addToast(data?.error || `No se pudo iniciar la partida (${httpStatus}).`, 'error');
+        return null;
       }
+      const next = { attemptId: data.attemptId, scene: data.scene, phase: data.phase };
+      attemptRef.current = next;
+      setAttempt(next);
+      const willLoadUnity = buildState === 'available';
+      setAttemptState(willLoadUnity ? 'loading' : 'playing');
+      setStatus(willLoadUnity ? 'Cargando simulador...' : 'Partida iniciada');
+      return next;
     } catch (err) {
-      console.error(err);
+      setAttemptState('error');
       setStatus('Error de red');
-      addToast(`Error de red o CORS: ${err.message}`, 'error');
+      addToast(`Error de red: ${err.message}`, 'error');
+      return null;
     }
-  }, [isCompleted, moduleId, addToast, setUser]);
+  }, [api, moduleId, isCompleted, buildState, addToast]);
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      // A-10: Only expose global in dev mode to prevent prod exploitation
-      if (process.env.NODE_ENV !== 'production') {
-        window.simulateGameScore = (points) => simulateScore(points);
+  const submitResult = useCallback(async (current, result) => {
+    if (submittedAttemptsRef.current.has(current.attemptId)) return;
+    submittedAttemptsRef.current.add(current.attemptId);
+    setAttemptState('submitting');
+    setStatus('Registrando resultado...');
+    try {
+      const { ok, status: httpStatus, data } = await api(`/simulator/attempts/${current.attemptId}/result`, {
+        method: 'POST',
+        body: JSON.stringify(result),
+      });
+      if (!ok) {
+        const message = data?.error || `Error ${httpStatus}`;
+        setAttemptState('error');
+        setStatus('Error al registrar');
+        addToast(`No se pudo registrar el resultado: ${message}`, 'error');
+        postToSimulator({ type: 'phase-ack-error', attemptId: current.attemptId, error: message });
+        return;
       }
-
-      // A-10: Validate event.origin against the expected simulator source
-      const ALLOWED_SIMULATOR_ORIGINS = (
-        process.env.NEXT_PUBLIC_SIMULATOR_ORIGIN ||
-        (process.env.NODE_ENV !== 'production' ? window.location.origin : '')
-      ).split(',').map(o => o.trim()).filter(Boolean);
-
-      const handleMessage = (event) => {
-        // Block messages from unknown origins
-        if (ALLOWED_SIMULATOR_ORIGINS.length > 0 && !ALLOWED_SIMULATOR_ORIGINS.includes(event.origin)) {
-          return;
-        }
-        if (event.data && event.data.type === 'SIMULATOR_SCORE' && typeof event.data.points === 'number') {
-          simulateScore(event.data.points);
-        }
-      };
-      window.addEventListener('message', handleMessage);
-
-      return () => {
-        if (process.env.NODE_ENV !== 'production') {
-          delete window.simulateGameScore;
-        }
-        window.removeEventListener('message', handleMessage);
-      };
+      setLastResult(data);
+      setAttemptState('finished');
+      if (!data.duplicate) {
+        setCompletedAttempts((n) => n + 1);
+        setSessionAttempts((n) => n + 1);
+        setSessionPoints((n) => n + data.pointsAwarded);
+      }
+      setUser((prev) => ({ ...prev, reservePoints: data.reservePoints }));
+      setStatus('Resultado registrado');
+      const tier = TIER_INFO[data.tier] || TIER_INFO.failed;
+      addToast(
+        data.pointsAwarded > 0 ? `${tier.title}: +${data.pointsAwarded} Puntos de Reserva ⚡` : `${tier.title}: sin Puntos de Reserva esta vez.`,
+        data.pointsAwarded > 0 ? 'success' : 'info'
+      );
+      postToSimulator({
+        type: 'phase-ack',
+        attemptId: current.attemptId,
+        tier: data.tier,
+        pointsAwarded: data.pointsAwarded,
+        reservePoints: data.reservePoints,
+      });
+    } catch (err) {
+      submittedAttemptsRef.current.delete(current.attemptId);
+      setAttemptState('error');
+      setStatus('Error de red');
+      addToast(`Error de red: ${err.message}`, 'error');
     }
-  }, [simulateScore]);
+  }, [api, addToast, setUser, postToSimulator]);
+
+  // Mensajes del simulador: solo de nuestro iframe, del mismo origen y del intento en curso
+  useEffect(() => {
+    const handleMessage = (event) => {
+      const frame = iframeRef.current;
+      if (!frame || event.source !== frame.contentWindow) return;
+      if (event.origin !== window.location.origin) return;
+      const data = event.data;
+      if (!data || data.source !== 'carm-sim' || data.v !== 1) return;
+      const current = attemptRef.current;
+      if (!current) return;
+
+      if (data.type === 'ready') {
+        setAttemptState((s) => (s === 'loading' ? 'playing' : s));
+        setStatus('Simulador listo');
+      } else if (data.type === 'load-error') {
+        setAttemptState('error');
+        setStatus('Error al cargar el simulador');
+        addToast('El simulador no pudo cargarse. Recarga la página e inténtalo de nuevo.', 'error');
+      } else if (data.type === 'phase-result') {
+        if (data.attemptId !== current.attemptId || data.stepId !== moduleId) return;
+        submitResult(current, {
+          phase: data.phase,
+          score: data.score,
+          maxScore: data.maxScore,
+          passed: data.passed,
+          errorCount: data.errorCount,
+          doseMsv: data.doseMsv,
+          timeSeconds: data.timeSeconds,
+        });
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [moduleId, submitResult, addToast]);
+
+  // Si el build no avisa que está listo, no dejar el overlay de carga para siempre
+  useEffect(() => {
+    if (attemptState !== 'loading') return undefined;
+    const timer = setTimeout(() => setAttemptState((s) => (s === 'loading' ? 'playing' : s)), LOADING_FALLBACK_MS);
+    return () => clearTimeout(timer);
+  }, [attemptState]);
+
+  const simulateResult = async (preset) => {
+    let current = attemptRef.current;
+    if (!current || submittedAttemptsRef.current.has(current.attemptId)) {
+      current = await startAttempt();
+    }
+    if (!current) return;
+    await submitResult(current, { phase: current.phase, ...preset.result, doseMsv: 0, timeSeconds: 1 });
+  };
+
+  const requestFullscreen = () => {
+    iframeRef.current?.requestFullscreen?.().catch(() => {});
+  };
 
   const requestFinish = () => {
-    if (isCompleted) return;
+    if (isCompleted || !canFinish) return;
     setShowConfirm(true);
   };
 
@@ -168,15 +336,95 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
         }));
         addToast('¡Práctica finalizada con éxito!', 'success');
       } else {
-        const errorText = await res.text();
+        let message = `Error ${res.status}`;
+        try { message = (await res.json()).error || message; } catch { /* sin cuerpo JSON */ }
         setStatus('Error al finalizar');
-        addToast(`Error al finalizar: ${res.status} - ${errorText}`, 'error');
+        addToast(`No se pudo finalizar: ${message}`, 'error');
       }
     } catch (err) {
       console.error(err);
       setStatus('Error de red');
       addToast(`Error de red: ${err.message}`, 'error');
     }
+  };
+
+  const showIframe = hasSimulator && !isCompleted && attempt && buildState === 'available';
+  const busy = attemptState === 'starting' || attemptState === 'submitting';
+  const tierInfo = lastResult ? (TIER_INFO[lastResult.tier] || TIER_INFO.failed) : null;
+
+  const renderStage = () => {
+    if (isCompleted) {
+      return (
+        <div className="mt-24 p-20 bg-success-light border-cyan radius-lg">
+          <h3 className="text-cyan mb-8">✅ Práctica Completada</h3>
+          <p className="text-sm">Ya has finalizado esta práctica y tus puntos han sido registrados. ¡Buen trabajo!</p>
+        </div>
+      );
+    }
+    if (stepInfo === null) {
+      return (
+        <div className="simulator-placeholder">
+          <div className="sim-icon">⏳</div>
+          <div className="sim-placeholder-title">Cargando práctica...</div>
+        </div>
+      );
+    }
+    if (!hasSimulator) {
+      return (
+        <div className="simulator-placeholder">
+          <div className="sim-icon">🦾</div>
+          <div className="sim-placeholder-title">Práctica en desarrollo</div>
+          <div className="sim-placeholder-text">
+            El minijuego de este paso todavía no está disponible en el simulador.
+            {stepInfo.error ? ` (${stepInfo.error})` : ''}
+          </div>
+        </div>
+      );
+    }
+    if (showIframe) {
+      return (
+        <div
+          className="simulator-frame-wrapper"
+          style={{ position: 'relative', borderRadius: '8px', overflow: 'hidden', border: '1px solid rgba(0,240,255,0.2)', background: '#0a0f1e' }}
+        >
+          <iframe
+            key={attempt.attemptId}
+            ref={iframeRef}
+            src={buildSimulatorUrl(attempt, moduleId)}
+            title={`Simulador C-Arm — ${stepInfo.title || moduleId}`}
+            allow="fullscreen; autoplay"
+            allowFullScreen
+            style={{ width: '100%', aspectRatio: '16 / 10', maxHeight: '75vh', border: 'none', display: 'block' }}
+          />
+          {attemptState === 'loading' && (
+            <div
+              role="status"
+              style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(10,15,30,0.85)', color: '#00f0ff', pointerEvents: 'none' }}
+            >
+              Cargando simulador...
+            </div>
+          )}
+        </div>
+      );
+    }
+    return (
+      <div className="simulator-placeholder">
+        <div className="sim-icon">🎮</div>
+        <div className="sim-placeholder-title">{stepInfo.title}</div>
+        <div className="sim-placeholder-text">
+          {buildState !== 'missing'
+            ? 'Cada partida es una fase del simulador. Al terminarla, la plataforma registra tu resultado y tus Puntos de Reserva.'
+            : IS_DEV
+              ? 'El build WebGL del simulador no está publicado en /webgl. Genéralo desde Unity (menú CArm → Build WebGL para ArcoC) o usa los botones de simulación.'
+              : 'El simulador no está disponible en este momento. Inténtalo más tarde.'}
+        </div>
+        {buildState !== 'missing' && (
+          <button className="btn btn-primary mt-16" onClick={startAttempt} disabled={busy || buildState === 'checking'}>
+            ▶ Comenzar minijuego
+          </button>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -197,40 +445,63 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
       <div className="simulator-grid">
         {/* ── Simulator area ─────────────────────────────────────────── */}
         <div>
-          <div className="simulator-placeholder">
-            <div className="sim-icon">🦾</div>
-            <div className="sim-placeholder-title">Simulador Unity WebGL</div>
-            <div className="sim-placeholder-text">
-              El build de Unity WebGL se cargará aquí. Cuando esté disponible,
-              el simulador se comunicará con esta plataforma vía{' '}
-              <code className="inline-code">postMessage</code> para registrar tus puntajes de forma segura.
-            </div>
+          {renderStage()}
 
-            {/* Dev / simulation controls */}
-            {!isCompleted ? (
-              <>
-                <div className="sim-controls">
-                  <button className="btn btn-gold" onClick={() => simulateScore(25)}>⭐ Simular +25 pts</button>
-                  <button className="btn btn-secondary" onClick={() => simulateScore(50)}>🏆 Simular +50 pts</button>
-                  <button className="btn btn-secondary" onClick={() => simulateScore(10)}>✅ Simular +10 pts</button>
+          {!isCompleted && hasSimulator && (
+            <>
+              {lastResult && tierInfo && (
+                <div className="card mt-16 p-20 border-cyan radius-lg" role="status" aria-live="polite">
+                  <h3 className={`mb-8 ${tierInfo.className}`}>{tierInfo.title}</h3>
+                  <p className="text-sm">
+                    {tierInfo.detail}{' '}
+                    {lastResult.pointsAwarded > 0
+                      ? <>Ganaste <strong className="text-amber">+{lastResult.pointsAwarded} Puntos de Reserva ⚡</strong>.</>
+                      : 'Esta partida no sumó Puntos de Reserva.'}
+                  </p>
                 </div>
-                <div className="text-muted mt-8 text-center text-xs">
-                  ℹ️ Estos botones emulan el <code>postMessage</code> que enviará Unity
-                </div>
-                <div className="mt-24 text-center">
-                  <button className="btn btn-danger" onClick={requestFinish}>
-                    🏁 Finalizar Práctica
-                  </button>
-                  <p className="text-muted mt-8 text-xs">Al finalizar no podrás sumar más puntos.</p>
-                </div>
-              </>
-            ) : (
-              <div className="mt-24 p-20 bg-success-light border-cyan radius-lg">
-                <h3 className="text-cyan mb-8">✅ Práctica Completada</h3>
-                <p className="text-sm">Ya has finalizado esta práctica y tus puntos han sido registrados. ¡Buen trabajo!</p>
+              )}
+
+              <div className="sim-controls mt-16">
+                {showIframe && (attemptState === 'finished' || attemptState === 'error') && (
+                  <button className="btn btn-secondary" onClick={startAttempt} disabled={busy}>🔁 Jugar de nuevo</button>
+                )}
+                {!showIframe && lastResult && buildState === 'available' && (
+                  <button className="btn btn-secondary" onClick={startAttempt} disabled={busy}>🔁 Jugar de nuevo</button>
+                )}
+                {showIframe && (
+                  <button className="btn btn-secondary" onClick={requestFullscreen}>⛶ Pantalla completa</button>
+                )}
               </div>
-            )}
-          </div>
+
+              {IS_DEV && (
+                <>
+                  <div className="sim-controls mt-16">
+                    {SIMULATED_RESULTS.map((preset) => (
+                      <button key={preset.kind} className={preset.className} onClick={() => simulateResult(preset)} disabled={busy}>
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="text-muted mt-8 text-center text-xs">
+                    ℹ️ Solo en desarrollo: envían a la API un resultado como el que reporta Unity.
+                  </div>
+                </>
+              )}
+            </>
+          )}
+
+          {!isCompleted && stepInfo !== null && (
+            <div className="mt-24 text-center">
+              <button className="btn btn-danger" onClick={requestFinish} disabled={!canFinish}>
+                🏁 Finalizar Práctica
+              </button>
+              <p className="text-muted mt-8 text-xs">
+                {canFinish
+                  ? 'Al finalizar no podrás sumar más puntos.'
+                  : 'Termina al menos una partida en el simulador para poder finalizar.'}
+              </p>
+            </div>
+          )}
 
           {/* ── Atlas Radiológico y Guía Clínica Intraoperatoria ───────── */}
           {guideData && (
@@ -294,19 +565,25 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
             <div className="progress-bar-wrap">
               <div className="progress-bar-fill" style={{ width: `${progressPercent}%` }} />
             </div>
-            <div className="progress-text">{currentPoints} / 500 para examen</div>
+            <div className="progress-text">{currentPoints} / {maxPoints} para examen</div>
           </div>
 
           <div className="widget mb-24">
             <div className="widget-title">Historial de Sesión</div>
             <div className="flex-between mt-8">
-              <span>Intentos:</span>
+              <span>Partidas:</span>
               <strong>{sessionAttempts}</strong>
             </div>
             <div className="flex-between mt-8">
               <span>Puntos ganados:</span>
               <strong id="session-points" className="text-green">+{sessionPoints}</strong>
             </div>
+            {hasSimulator && (
+              <div className="flex-between mt-8">
+                <span>Partidas terminadas (total):</span>
+                <strong>{completedAttempts}</strong>
+              </div>
+            )}
             <div className="flex-between mt-8">
               <span>Estado:</span>
               <span className="text-muted">{status}</span>
@@ -316,10 +593,11 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
           <div className="widget mb-24">
             <div className="widget-title">📋 Cómo funciona</div>
             <ul className="instructions-list">
-              <li>Completa sesiones en el simulador</li>
-              <li>Gana ⚡ Puntos de Reserva</li>
-              <li>Úsalos en el examen para <strong className="text-amber">50/50</strong></li>
-              <li>No suman a tu nota final</li>
+              <li>Cada partida es una fase del simulador</li>
+              <li>Perfecta (≥70 % y sin errores): <strong className="text-amber">+10 ⚡</strong></li>
+              <li>Aprobada con errores (≥70 %): <strong className="text-amber">+5 ⚡</strong></li>
+              <li>No aprobada: 0 puntos</li>
+              <li>Úsalos en el examen para <strong className="text-amber">50/50</strong>; no suman a tu nota final</li>
             </ul>
           </div>
 

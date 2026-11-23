@@ -15,6 +15,12 @@ build/
 coverage/
 extracted_texts*.txt
 
+# Artefactos pesados que se generan fuera de git (ver DOCUMENTATION.md, sección 12):
+#  - videos web por módulo: scripts/prepare-module-videos.ps1
+#  - build WebGL del simulador: menú de Unity "CArm → Build WebGL para ArcoC"
+client/public/videos/modulo*/
+client/public/webgl/
+
 # Debug / extraction tools (A-14)
 extract_ppt.py
 test_api.js

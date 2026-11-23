@@ -23,6 +23,7 @@ export async function resetStudentState(request, options = {}) {
   const {
     email = 'student@test.com',
     password = 'student123',
+    name,
     reserve_points,
     exam_attempts,
     exam_score,
@@ -35,6 +36,7 @@ export async function resetStudentState(request, options = {}) {
     data: {
       email,
       password,
+      name,
       reserve_points,
       exam_attempts,
       exam_score,

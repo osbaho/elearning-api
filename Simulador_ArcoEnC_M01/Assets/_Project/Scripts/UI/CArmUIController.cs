@@ -12,6 +12,7 @@ using CArmSimulator.Minigames.BeamMaster;
 using CArmSimulator.Minigames.IsocenterCommand;
 using CArmSimulator.Scorm;
 using CArmSimulator.Audio;
+using CArmSimulator.Web;
 
 namespace CArmSimulator.UI
 {
@@ -551,6 +552,11 @@ namespace CArmSimulator.UI
         {
             UnhookEvents();
 
+            if (ScormBridge.Instance != null)
+            {
+                ScormBridge.Instance.PhaseAcknowledged += OnPlatformPhaseAcknowledged;
+            }
+
             if (protocolZeroController != null)
             {
                 onP0TutorRescue = (title, explanation) => ShowTutorRescueDialog(title, explanation);
@@ -760,6 +766,11 @@ namespace CArmSimulator.UI
 
         private void UnhookEvents()
         {
+            if (ScormBridge.Instance != null)
+            {
+                ScormBridge.Instance.PhaseAcknowledged -= OnPlatformPhaseAcknowledged;
+            }
+
             if (protocolZeroController != null)
             {
                 if (onP0TutorRescue != null) protocolZeroController.OnTutorRescueTriggered -= onP0TutorRescue;
@@ -1882,61 +1893,35 @@ namespace CArmSimulator.UI
                 // En modo web monofase O al finalizar la Fase 3 (última fase del curso completo)
                 if (singlePhaseWebMode || isPhase3Done)
                 {
-                    // 1. Extraer métricas de la fase concluida
-                    float score = 100f;
-                    float dose = 0f;
-                    float elapsed = 0f;
-
-                    if (currentActiveTab == 1 && protocolZeroController != null)
-                    {
-                        score = protocolZeroController.CurrentScore;
-                        dose = 0f;
-                        elapsed = protocolZeroController.ElapsedTime;
-                        protocolZeroController.PauseMinigame();
-                    }
-                    else if (currentActiveTab == 2 && beamMasterController != null)
-                    {
-                        score = beamMasterController.CurrentScore;
-                        dose = beamMasterController.AccumulatedPatientDose;
-                        elapsed = beamMasterController.ElapsedTime;
-                        beamMasterController.PauseMinigame();
-                    }
-                    else if ((currentActiveTab == 3 || isPhase3Done) && isocenterController != null)
-                    {
-                        score = isocenterController.CurrentScore;
-                        dose = 0f;
-                        elapsed = isocenterController.ElapsedTime;
-                        isocenterController.PauseMinigame();
-                    }
-
+                    // 1. Fase concluida y su minijuego (la fase reportada y las métricas siempre coinciden)
                     int phaseIndexToNotify = isPhase3Done ? 3 : currentActiveTab;
-
-                    // 2. Notificar a la web/API
-                    if (ScormBridge.Instance != null)
+                    MinigameBase finishedMinigame = phaseIndexToNotify switch
                     {
-                        ScormBridge.Instance.NotifyPhaseCompletedToWeb(phaseIndexToNotify, score, dose, elapsed);
-                    }
-                    else if (gameManager != null)
-                    {
-                        gameManager.NotifyPhaseCompletedToWeb(phaseIndexToNotify, score, dose, elapsed);
-                    }
+                        1 => protocolZeroController,
+                        2 => beamMasterController,
+                        3 => isocenterController,
+                        _ => null
+                    };
+                    float dose = (phaseIndexToNotify == 2 && beamMasterController != null)
+                        ? beamMasterController.AccumulatedPatientDose
+                        : 0f;
+                    if (finishedMinigame != null) finishedMinigame.PauseMinigame();
 
-                    // 3. Cambiar texto del botón a "✓ FASE COMPLETADA — VOLVIENDO AL CURSO..." (interactable = false)
-                    if (draNovaContinueButton != null)
-                    {
-                        draNovaContinueButton.interactable = false;
-                        var btnTxt = GetDraNovaButtonText();
-                        if (btnTxt != null)
-                        {
-                            btnTxt.text = "✓ FASE COMPLETADA — VOLVIENDO AL CURSO...";
-                        }
-                    }
+                    // 2. Notificar a la plataforma (la API decide los Puntos de Reserva y responde con un acuse)
+                    bool sent = ReportPhaseResultToPlatform(phaseIndexToNotify, finishedMinigame, dose);
 
-                    // 4. Mostrar en Tarjeta_HUD_DraNova el mensaje especificado
-                    ShowDraNovaDialog("QUIRÓFANO // FASE FINALIZADA",
-                        "Dra. Nova: Progreso registrado exitosamente en la plataforma. Regresando al módulo de video...");
+                    // 3. Mensaje en la tarjeta de Dra. Nova y botón bloqueado (la navegación la controla la plataforma)
+                    string body;
+                    if (!sent)
+                        body = "Dra. Nova: Fase finalizada. No se pudo contactar a la plataforma; el resultado no se registró.";
+                    else if (WebLaunchContext.IsPlatformLaunch)
+                        body = "Dra. Nova: Fase finalizada. Enviando tu resultado a la plataforma...";
+                    else
+                        body = "Dra. Nova: Fase finalizada en modo local (sin plataforma). El resultado no se registra.";
+                    ShowDraNovaDialog("QUIRÓFANO // FASE FINALIZADA", body);
+                    LockDraNovaButton("✓ FASE COMPLETADA");
 
-                    Debug.Log($"[WebBridge] Phase {phaseIndexToNotify} completed. Web API notified (Score={score:F1}, Dose={dose:F2} mSv, Time={elapsed:F1}s). Game view exiting / paused.");
+                    Debug.Log($"[WebBridge] Phase {phaseIndexToNotify} completed and reported (sent={sent}). Game view paused.");
                     return;
                 }
 
@@ -1968,6 +1953,70 @@ namespace CArmSimulator.UI
         // ════════════════════════════════════════════════════════════════════
         // Web Integration & Single Phase Helpers
         // ════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Envía el resultado de la fase a la plataforma ArcoC (vía ScormBridge → postMessage).
+        /// attempt y step salen de la URL de lanzamiento para que la API pueda correlacionarlo.
+        /// </summary>
+        private bool ReportPhaseResultToPlatform(int phase, MinigameBase minigame, float doseMsv)
+        {
+            var bridge = ScormBridge.Instance;
+            if (bridge == null)
+            {
+                Debug.LogWarning("[WebBridge] ScormBridge no disponible: el resultado no se envió.");
+                return false;
+            }
+
+            bridge.NotifyPhaseResult(new PhaseResultMessage
+            {
+                attemptId = WebLaunchContext.AttemptId ?? string.Empty,
+                stepId = WebLaunchContext.StepId ?? string.Empty,
+                phase = phase,
+                score = minigame != null ? minigame.CurrentScore : 0,
+                maxScore = minigame != null ? minigame.MaxScore : 100,
+                passed = minigame != null && minigame.Passed,
+                errorCount = minigame != null ? minigame.ErrorCount : 0,
+                doseMsv = doseMsv,
+                timeSeconds = minigame != null ? minigame.ElapsedTime : 0f
+            });
+            return true;
+        }
+
+        /// <summary>Acuse de la plataforma: muestra lo que la API registró para esta partida.</summary>
+        private void OnPlatformPhaseAcknowledged(HostMessage ack)
+        {
+            if (ack == null || ack.attemptId != WebLaunchContext.AttemptId) return;
+
+            string body;
+            if (ack.type == "phase-ack")
+            {
+                string tierLabel = ack.tier == "perfect" ? "fase perfecta"
+                    : ack.tier == "intermediate" ? "fase aprobada con errores"
+                    : "fase no aprobada";
+                body = ack.pointsAwarded > 0
+                    ? $"Dra. Nova: Resultado registrado en la plataforma ({tierLabel}). Ganaste +{ack.pointsAwarded} Puntos de Reserva."
+                    : $"Dra. Nova: Resultado registrado en la plataforma ({tierLabel}). Esta partida no sumó Puntos de Reserva; puedes volver a intentarlo.";
+            }
+            else
+            {
+                body = "Dra. Nova: La plataforma no pudo registrar el resultado. " + (ack.error ?? string.Empty);
+            }
+
+            ShowDraNovaDialog("QUIRÓFANO // FASE FINALIZADA", body);
+            LockDraNovaButton("✓ FASE COMPLETADA");
+        }
+
+        /// <summary>
+        /// Deja el botón de la tarjeta deshabilitado con el texto indicado.
+        /// Se llama después de ShowDraNovaDialog, que restablece el texto a "CONTINUAR".
+        /// </summary>
+        private void LockDraNovaButton(string label)
+        {
+            if (draNovaContinueButton == null) return;
+            draNovaContinueButton.interactable = false;
+            var btnTxt = GetDraNovaButtonText();
+            if (btnTxt != null) btnTxt.text = label;
+        }
 
         /// <summary>
         /// Parses the target phase integer (1, 2, or 3) from absolute URL query parameters (?phase=X or &phase=X).

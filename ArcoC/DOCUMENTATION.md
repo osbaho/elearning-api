@@ -92,11 +92,15 @@ ArcoC/
 │   └── images/                    # Archivos fuente del Atlas Radiológico (Módulos 1-5)
 │
 ├── scripts/
-│   └── enrich_lecturas_with_images.py # Script de automatización de inyección de imágenes clínicas
+│   ├── enrich_lecturas_with_images.py # Script de automatización de inyección de imágenes clínicas
+│   └── prepare-module-videos.ps1  # Masters de un módulo → videos web (H.264 ~4 Mbps, faststart)
 │
 ├── server/
 │   ├── config/
-│   │   └── db.js                  # Abstracción dual SQLite/PostgreSQL y migraciones
+│   │   ├── db.js                  # Abstracción dual SQLite/PostgreSQL y migraciones
+│   │   ├── curriculum.js          # Malla de 26 pasos: fuente única de verdad del servidor
+│   │   ├── simulatorCatalog.js    # Paso práctico → escena y fase del simulador Unity
+│   │   └── reservePoints.js       # Regla 10/5/0 por fase y techo de 500 Puntos de Reserva
 │   ├── middleware/
 │   │   ├── auth.js                # Validación de JWT (cookies y headers) y rol admin
 │   │   └── rateLimiter.js         # Rate limiting global y login limiter
@@ -104,6 +108,7 @@ ArcoC/
 │   │   ├── auth.js                # Rutas de login, logout, me, descriptor, onboarding
 │   │   ├── exam.js                # Preguntas, inicio, comodines, calificación, verificación
 │   │   ├── progress.js            # Marcado de pasos con validación secuencial
+│   │   ├── simulator.js           # Partidas del simulador Unity y resultados por fase
 │   │   └── admin.js               # Dashboard de auditoría IES y descarga de constancias
 │   ├── utils/
 │   │   ├── certificate.js         # Generación de PDF (PDFKit) y validación pública
@@ -121,7 +126,9 @@ ArcoC/
 │   ├── public/
 │   │   ├── models/                # Modelos pre-entrenados de Face-API.js
 │   │   ├── documents/             # PDFs oficiales compilados (Lecturas 1-5 y Guía Rápida de Bolsillo)
-│   │   └── images/                # Atlas Radiológico clínico AO Trauma (Módulos 1-5)
+│   │   ├── images/                # Atlas Radiológico clínico AO Trauma (Módulos 1-5)
+│   │   ├── videos/moduloN/        # Videos web por módulo (generados, fuera de git)
+│   │   └── webgl/                 # Build WebGL del simulador Unity (generado, fuera de git)
 │   └── src/
 │       ├── app/
 │       │   ├── page.js            # Landing page institucional
@@ -134,7 +141,7 @@ ArcoC/
 │       ├── components/
 │       │   ├── ModuleCard.js      # Tarjeta de módulo con estado visual
 │       │   ├── VideoPlayer.js     # Reproductor con control de adelanto (scrubbing)
-│       │   ├── SimulatorView.js   # Puente interactivo para simuladores Unity + Atlas Radiológico modal
+│       │   ├── SimulatorView.js   # Página de práctica: partidas, iframe del simulador Unity y Atlas Radiológico
 │       │   └── ProtectedRoute.js  # Guardián de rutas por autenticación y rol
 │       ├── context/
 │       │   ├── AuthContext.js     # Estado reactivo global de usuario
@@ -142,7 +149,7 @@ ArcoC/
 │       ├── hooks/
 │       │   └── useProctoring.js   # Hook para cámara, face-api y WebSockets
 │       └── lib/
-│           └── courseConfig.js    # Configuración de los 25 pasos del curso con títulos clínicos
+│           └── courseConfig.js    # Configuración de los 26 pasos del curso (títulos, videos, íconos)
 │
 └── tests/
     ├── helpers/
@@ -202,6 +209,15 @@ Bitácora de auditoría forense del examen:
 * `detail`: Descripción técnica detallada del evento
 * `timestamp`: Fecha y hora del suceso (se depuran registros con más de 30 días)
 
+#### 5. `simulator_attempts`
+Una fila por partida en el simulador Unity WebGL (1 paso práctico = 1 fase = 1 partida). La crea `POST /api/simulator/attempts` y la completa el resultado de la fase:
+* `id` (TEXT PRIMARY KEY, UUID que viaja como `attempt` en la URL del iframe)
+* `student_id`, `step_id` (ej: `'m1_s2'`), `scene`, `phase`
+* `status`: `'started'` o `'completed'`; `started_at` / `completed_at` (ISO 8601, los fija el servidor)
+* Telemetría reportada por Unity: `score`, `max_score`, `passed`, `error_count`, `dose_msv`, `time_seconds`
+* Decisión del servidor: `tier` (`perfect` | `intermediate` | `failed`) y `points_awarded`
+* Índice: `(student_id, step_id)`
+
 ---
 
 ## 4. Flujos de Autenticación y Sesión
@@ -215,15 +231,25 @@ Bitácora de auditoría forense del examen:
 
 ## 5. Estructura del Curso y Secuencialidad
 
-El programa académico consta de **5 módulos temáticos**, cada uno subdividido en **5 pasos estrictos (25 pasos en total)**:
-1. `mX_v1`: Video 1 (Fundamentación teórica y física aplicada).
-2. `mX_s1`: Minijuego interactivo 1 (Práctica de parámetros, angulaciones y estaciones AO Trauma).
-3. `mX_v2`: Video 2 (Profundización técnica, cinemática robótica y radioprotección avanzada).
-4. `mX_s2`: Minijuego interactivo 2 (Optimización de dosis, colimación y destreza operativa).
-5. `mX_vr`: Video Recopilatorio (Síntesis de cierre y preparación para evaluación).
+El programa académico consta de **5 módulos temáticos** y **26 pasos obligatorios** en total. Claves: `mX_vN` = video, `mX_sN` = minijuego, `mX_vr` = video recopilatorio.
+
+**Módulo 1 (contenido definitivo, 6 pasos):** cada video va seguido de su minijuego en el simulador Unity.
+
+| Paso | Contenido | Archivo / Simulador |
+| :--- | :--- | :--- |
+| `m1_v1` | Video 1: Historia, Física y Pilares S.E.R. | `/videos/modulo1/M01_V01_SER.mp4` |
+| `m1_s1` | Minijuego 1: Protocolo Cero | `Scene1`, fase 1 (`MG1_ProtocolZero`) |
+| `m1_v2` | Video 2: Densidades, Unidades y Normativa | `/videos/modulo1/M01_V02_Fisica.mp4` |
+| `m1_s2` | Minijuego 2: Maestro del Haz | `Scene1`, fase 2 (`MG2_BeamMaster`) |
+| `m1_v3` | Video 3: Geometría del Arco en C | `/videos/modulo1/M01_V03_Geometria.mp4` |
+| `m1_s3` | Minijuego 3: Comando Isocentro | `Scene1`, fase 3 (`MG3_IsocenterCommand`) |
+
+**Módulos 2–5 (contenido en producción, 5 pasos cada uno):** `mX_v1` → `mX_s1` → `mX_v2` → `mX_s2` → `mX_vr`, con videos placeholder y prácticas "en desarrollo".
+
+**Fuente única de verdad:** la lista ordenada vive en [`server/config/curriculum.js`](server/config/curriculum.js) (`COURSE_STEPS`, usada por progreso, examen, admin y correos) y en [`client/src/lib/courseConfig.js`](client/src/lib/courseConfig.js) (títulos, videos e íconos). El test E2E 19 falla si ambas listas difieren. Los totales (26) se calculan; no hay constantes "25" repartidas por el código.
 
 ### Enforce de Secuencialidad Backend
-El endpoint `POST /api/progress/:moduleId` valida en el servidor la lista ordenada `ALL_STEPS`. Para marcar cualquier paso `n`, el paso `n-1` debe existir previamente en estado `'completed'` en `course_progress`. El módulo `'exam'` está protegido contra marcado manual: solo el endpoint `/api/submit-exam` puede otorgarlo tras calificar formalmente con puntaje ≥ 90%.
+El endpoint `POST /api/progress/:moduleId` valida en el servidor la lista ordenada `COURSE_STEPS`. Para marcar cualquier paso `n`, el paso `n-1` debe existir previamente en estado `'completed'` en `course_progress`. Los minijuegos con contenido en el simulador exigen además **al menos una partida terminada** (`simulator_attempts` con `status = 'completed'`). El módulo `'exam'` está protegido contra marcado manual: solo el endpoint `/api/submit-exam` puede otorgarlo tras calificar formalmente con puntaje ≥ 90%. Los conteos de avance (bloqueo del examen, estándar IES, CSV, recordatorios) solo cuentan pasos de la malla vigente.
 
 ### Control de Visualización en Videos ([`VideoPlayer.js`](file:///c:/Oscar/ArcoC/client/src/components/VideoPlayer.js))
 * **Detección de Adelanto No Autorizado (Anti-Scrubbing):** Si el estudiante intenta saltar a una marca de tiempo superior a la observada de forma continua (+2 segundos de tolerancia), el reproductor revierte inmediatamente el cursor al tiempo máximo visto legítimamente y muestra una advertencia visual.
@@ -233,14 +259,65 @@ El endpoint `POST /api/progress/:moduleId` valida en el servidor la lista ordena
 
 ## 6. Simulador y Puntos de Reserva
 
-Los estudiantes acumulan **Puntos de Reserva** al realizar actividades prácticas en los minijuegos interactivos. Estos puntos se utilizan como moneda de canje para activar comodines de ayuda durante el examen final.
+Los estudiantes acumulan **Puntos de Reserva** al jugar los minijuegos del simulador Unity WebGL (proyecto `Simulador_ArcoEnC_M01` del monorepo). Estos puntos se canjean por el comodín 50/50 en el examen final.
 
-### Reglas de Negocio en Servidor ([`server/routes/exam.js`](file:///c:/Oscar/ArcoC/server/routes/exam.js))
-1. **Límite por Evento:** Máximo 100 puntos por llamada.
-2. **Techo Global:** Máximo acumulable de 500 Puntos de Reserva por estudiante.
-3. **Validación de Fuente:** El parámetro `source` debe corresponder a un módulo práctico válido (`m[1-5]_(s1|s2)`).
-4. **Idempotencia de Puntos:** Si el módulo indicado en `source` ya figura como completado en `course_progress`, el servidor rechaza la solicitud para evitar la recolección repetitiva de puntos en un mismo ejercicio.
-5. **Comunicación WebGL Segura:** El componente [`SimulatorView.js`](file:///c:/Oscar/ArcoC/client/src/components/SimulatorView.js) valida los orígenes permitidos (`ALLOWED_SIMULATOR_ORIGINS`) en los eventos `window.postMessage`, evitando la inyección de puntajes desde dominios o iframes no autorizados.
+### Contrato Plataforma ↔ Simulador
+La **API es la dueña de la correlación**: decide qué escena y fase juega cada paso y cuántos puntos vale cada resultado. Unity solo juega lo que se le indica y reporta hechos. Unity **nunca** llama a la API; habla con la página contenedora, que ya tiene la sesión del estudiante.
+
+```
+Página /course/practice/m1_s1 (SimulatorView.js)
+  1. POST /api/simulator/attempts { stepId }          → { attemptId, scene, phase }
+  2. <iframe src="/webgl/index.html?attempt=…&step=m1_s1&scene=Scene1&phase=1">   (mismo origen)
+Unity WebGL (plantilla CArmEmbed + ScormBridge + ArcoEnC_SCORM.jslib)
+  3. Carga escena y fase (WebLaunchContext / WebSceneRouter); el estudiante juega
+  4. postMessage → { source: "carm-sim", v: 1, type: "phase-result", attemptId, stepId,
+                     phase, score, maxScore, passed, errorCount, doseMsv, timeSeconds }
+Página
+  5. Acepta el mensaje solo si event.source es su iframe, el origen es el propio y
+     attemptId/stepId coinciden → POST /api/simulator/attempts/:attemptId/result
+API
+  6. Valida, decide los puntos y responde { tier, pointsAwarded, reservePoints }
+Página → Unity
+  7. postMessage { source: "carm-host", v: 1, type: "phase-ack", tier, pointsAwarded, … }
+     (la plantilla lo reenvía a ScormBridge.OnHostMessage y Dra. Nova muestra el resultado)
+```
+
+Otros mensajes del simulador: `ready` (Unity cargó) y `load-error`. Endpoints ([`server/routes/simulator.js`](server/routes/simulator.js)):
+
+| Endpoint | Descripción |
+| :--- | :--- |
+| `GET /api/simulator/steps/:stepId` | Disponibilidad del paso, escena/fase, partidas terminadas y puntos ganados (404 si el paso no tiene simulador). |
+| `POST /api/simulator/attempts` | Crea una partida. Exige el paso previo completado; 409 si el minijuego ya fue finalizado. |
+| `POST /api/simulator/attempts/:id/result` | Registra el resultado de la fase y otorga los puntos. |
+
+### Regla de Puntos por Fase ([`server/config/reservePoints.js`](server/config/reservePoints.js))
+| Resultado | Condición | Puntos |
+| :--- | :--- | :--- |
+| Perfecta | Aprobó, ≥ 70 % y 0 errores | **10** |
+| Intermedia | Aprobó y ≥ 70 %, con errores | **5** |
+| No aprobada | No aprobó, < 70 % o se agotó el tiempo | **0** |
+
+El 70 % es el mismo `passScorePercent` de las `MinigameConfig` de Unity. "Perfecta" se mide por errores y no por puntaje, porque ProtocolZero y BeamMaster recortan a 100 sumas brutas mayores (se puede llegar a 100 con errores).
+
+### Reglas de Negocio en Servidor
+1. **Techo Global:** máximo 500 Puntos de Reserva por estudiante (la partida suma solo hasta el techo).
+2. **Idempotencia:** reenviar el resultado de una partida devuelve el mismo registro con `duplicate: true` y no suma puntos.
+3. **Correlación:** la fase reportada debe coincidir con la del intento (422) y el intento debe pertenecer al estudiante (404).
+4. **Plausibilidad de tiempo:** el tiempo de juego reportado no puede superar el tiempo real transcurrido desde que el servidor creó el intento (+5 s de margen; 422).
+5. **Sin puntos tras finalizar:** si el minijuego ya fue finalizado no se crean partidas ni se aceptan resultados (409).
+6. **`/api/add-points` es solo de desarrollo y pruebas:** en producción responde 404. Exige `source` válido (paso práctico de la malla) y no completado.
+7. **Comunicación WebGL segura:** el build se sirve desde el mismo origen (`client/public/webgl`), Unity publica con `targetOrigin` = su propio origen y `SimulatorView` descarta mensajes que no vengan de su iframe. No hacen falta variables `NEXT_PUBLIC_SIMULATOR_*`.
+
+### Catálogo del Simulador ([`server/config/simulatorCatalog.js`](server/config/simulatorCatalog.js))
+Mapea cada paso práctico a `{ scene, phase }`. Hoy: `m1_s1 → Scene1/1`, `m1_s2 → Scene1/2`, `m1_s3 → Scene1/3`. Los pasos sin entrada muestran la práctica como "en desarrollo" y se pueden finalizar sin partida.
+
+### Cómo incorporar el siguiente módulo (proceso repetible)
+1. **Videos:** dejar los masters `M0N_V0k_Master_<Tema>.mp4` en la carpeta de masters y ejecutar `scripts/prepare-module-videos.ps1 -Module N -SourceDir <carpeta>`.
+2. **Malla:** ajustar los pasos del módulo en `server/config/curriculum.js` y en `client/src/lib/courseConfig.js` (`videoSrc: '/videos/moduloN/...'`).
+3. **Unity:** crear la escena del módulo en el mismo proyecto, añadirla a Build Settings y fijar sus fases (1..n) en `CArmUIController`/escena.
+4. **Catálogo:** registrar cada `mN_sK → { scene, phase }` en `simulatorCatalog.js`.
+5. **Build:** en Unity, menú **CArm → Build WebGL para ArcoC** (genera `client/public/webgl`).
+6. **Pruebas:** actualizar el test E2E 19 (malla esperada) y ejecutar la suite.
 
 ### Atlas Radiológico y Casos Reales AO Trauma
 [`SimulatorView.js`](file:///c:/Oscar/ArcoC/client/src/components/SimulatorView.js) incorpora un componente de **Atlas Clínico Intraoperatorio** contextualizado para cada estación de práctica:
@@ -266,42 +343,47 @@ sequenceDiagram
     participant API as Express API
     participant DB as Base de Datos
 
-    Estudiante->>UI: Clic en "Comenzar Examen"
+    Estudiante->>UI: Clic en "Empezar Examen"
+    UI->>UI: Enciende la cámara (si falla: aviso y NO se consume intento)
     UI->>API: POST /api/start-exam
-    API->>DB: Incrementa exam_attempts (+1)
-    API-->>UI: { success: true }
-    UI->>WS: emit('start_exam')
-    UI->>API: GET /api/questions (Requiere 25 pasos en prod)
-    API-->>UI: 10 preguntas aleatorias (Fisher-Yates)
+    API->>DB: exam_attempts +1, exam_in_progress = 1, fija exam_question_ids (10 al azar)
+    API-->>UI: { success, questionCount, attemptsUsed, maxAttempts } (409 si ya aprobó · 403 sin intentos o curso incompleto en prod)
+    UI->>API: GET /api/questions
+    API-->>UI: Preguntas del intento abierto (409 si no hay intento)
 
     loop Durante el Examen
-        UI->>WS: emit('proctoring_heartbeat', { faceDetected, isMatch })
-        Note over WS: Monitor valida latido cada 10s.<br/>Si >15s sin señal: emit('proctoring_warning')<br/>Si >30s o 3 fallas: emit('exam_suspended')
+        UI->>WS: emit('start_exam') con el primer latido real, luego emit('proctoring_heartbeat') cada 3 s
+        Note over WS: Monitor cada 10 s.<br/>Si >15 s sin señal: emit('proctoring_warning')<br/>Si >30 s o 3 ciclos sin rostro / identidad: emit('exam_suspended') y cierra el intento
         opt Comodín 50/50
             UI->>API: POST /api/use-wildcard { question_id }
-            API->>DB: Debita 100 pts (Costo fijo en servidor)
+            API->>DB: Debita 100 pts (solo dentro del intento y sobre sus preguntas)
             API-->>UI: { eliminate_options: ['a', 'c'], reservePoints: 50 }
         end
     end
 
     Estudiante->>UI: Clic en "Enviar Respuestas"
+    UI->>WS: emit('end_exam') (fin de la supervisión)
     UI->>API: POST /api/submit-exam { answers }
-    API->>DB: Califica contra BD (Re-fetch, no confía en cliente)
-    API->>DB: Transacción: Actualiza exam_score = MAX(actual, previo)
+    API->>DB: Exige el intento abierto y exactamente sus preguntas; califica contra BD
+    API->>DB: Transacción: exam_score = MAX(actual, previo) y cierra el intento
     alt Calificación >= 90%
         API->>DB: INSERT INTO course_progress (module_id = 'exam')
         API-->>UI: Aprobado (Habilita descarga de certificado)
     else Calificación < 90%
-        API-->>UI: Reprobado (Muestra opciones de reintento si attempts < 3)
+        API-->>UI: Reprobado (puede reintentar si attempts < 3)
     end
 ```
 
 ### Reglas Críticas Implementadas:
-* **Costo Inmutable del Comodín 50/50:** Fijado rígidamente en el servidor en **100 Puntos de Reserva**. Cualquier parámetro de costo enviado desde el navegador es descartado.
-* **Límite de Intentos:** Restringido a un máximo de **3 intentos**. Superado este umbral, el endpoint `/api/start-exam` responde `403 Forbidden`.
-* **Bloqueo de Reenvío Aprobado:** Si el estudiante ya posee el módulo `'exam'` aprobado en su historial, `/api/submit-exam` responde `409 Conflict`.
+* **Intento abierto obligatorio:** `/api/start-exam` abre el intento y fija su set de preguntas. Sin intento abierto, `/api/questions`, `/api/submit-exam` y `/api/use-wildcard` responden `409`. Así no se pueden ver preguntas sin consumir un intento ni enviar exámenes sin pasar por el límite de 3.
+* **Set de preguntas fijo por intento:** recargar la página devuelve las mismas preguntas. `/api/submit-exam` exige responder exactamente ese set (no se pueden elegir preguntas) con opciones `a`–`d`, y la respuesta no revela qué preguntas fueron correctas.
+* **Costo Inmutable del Comodín 50/50:** Fijado rígidamente en el servidor en **100 Puntos de Reserva**. Cualquier parámetro de costo enviado desde el navegador es descartado. Solo se puede usar dentro del intento y sobre una de sus preguntas.
+* **Límite de Intentos:** Máximo **3 intentos**; cada clic en "Empezar Examen" consume uno (si había uno abierto, conserva sus preguntas). Superado el límite, `/api/start-exam` responde `403` y la página muestra el motivo sin iniciar.
+* **Bloqueo de Reenvío Aprobado:** Si el estudiante ya aprobó, `/api/start-exam` y `/api/submit-exam` responden `409 Conflict`.
+* **Malla completa en producción:** `/api/start-exam`, `/api/questions` y `/api/submit-exam` exigen los 26 pasos completados cuando `NODE_ENV=production`.
 * **Calificación Atómica:** La evaluación se calcula únicamente en el servidor comparando las respuestas enviadas contra la base de datos. Se emplea `withTransaction` para garantizar que la nota máxima registrada sea `MAX(puntaje_actual, puntaje_previo)`.
-* **Persistencia de Sesión Local:** La UI guarda las respuestas seleccionadas y opciones eliminadas en `sessionStorage` para resistir cierres accidentales o recargas de pestaña.
+* **Errores visibles:** si la API rechaza las preguntas o el inicio (curso incompleto, intentos agotados, sesión vencida, límite de peticiones), la página muestra el mensaje del servidor con opciones para reintentar o volver al curso.
+* **Persistencia de Sesión Local:** La UI guarda las respuestas seleccionadas y opciones eliminadas en `sessionStorage` para resistir recargas; al cargar las preguntas del intento descarta las que no le pertenecen.
 
 ---
 
@@ -315,11 +397,12 @@ La supervisión remota en tiempo real se orquesta entre [`useProctoring.js`](fil
 3. **Bucle Local de Detección:** Cada 3 segundos, el navegador ejecuta `detectSingleFace().withFaceLandmarks().withFaceDescriptor()`.
 4. **Verificación de Coincidencia:** Se calcula la distancia euclidiana entre el rostro detectado en vivo y el descriptor de referencia:
    $$\text{Distancia} < 0.6 \implies \text{Identidad Confirmada}$$
-5. **Heartbeat WebSocket:** Se emite periódicamente el evento `'proctoring_heartbeat'` al backend con el estado de presencia e identidad.
+5. **Heartbeat WebSocket:** Con el primer latido real (cámara y modelos ya listos) el cliente emite `'start_exam'`, que abre la sesión de supervisión en el servidor; después envía `'proctoring_heartbeat'` cada 3 segundos con `{ faceDetected, isMatch }`. Si no hay descriptor registrado para comparar, `isMatch` viaja como `null` (identidad no evaluable, sin penalización). Tras una reconexión del socket se reabre la sesión.
+6. **Fin de la supervisión:** al enviar el examen o salir de la página, el cliente emite `'end_exam'`; sin ello, el monitor interpretaría el fin de los latidos como pérdida de señal.
 
 ### Tolerancia y Estados del Monitor en Servidor (Cada 10 segundos)
 * **Advertencia Temprana (15 segundos):** Si transcurren más de 15 segundos sin recibir un latido (pero menos de 30s), el servidor emite `'proctoring_warning'`. La interfaz del estudiante despliega un banner de aviso preventivo en la barra lateral para corregir su conexión o postura.
-* **Pérdida Crítica de Señal (30 segundos):** Si la desconexión supera los 30 segundos, se suspende el examen de forma permanente emitiendo `'exam_suspended'`, incrementando `proctoring_incidents` y registrando el evento `PROCTORING_EXPIRED`.
+* **Pérdida Crítica de Señal (30 segundos):** Si la desconexión supera los 30 segundos, se suspende el examen de forma permanente emitiendo `'exam_suspended'`, incrementando `proctoring_incidents`, registrando el evento `PROCTORING_EXPIRED` y **cerrando el intento en el servidor** (ya no se puede enviar por la API).
 * **Infracción de Identidad o Ausencia Facial:** Si se detecta ausencia de rostro o discrepancia biométrica, se incrementa un contador de violación (`violationCount`). Se requiere confirmar la infracción durante **3 ciclos continuos (30 segundos)** para suspender el examen definitivamente, previniendo falsos positivos por parpadeos o movimientos rápidos.
 * **Detección de Cámaras Virtuales:** El hook inspecciona la etiqueta del dispositivo (`videoTrack.label`). Nombres asociados a OBS, Snap Camera, vCam o software emulador son bloqueados inmediatamente antes de permitir el inicio de la evaluación.
 
@@ -468,14 +551,19 @@ TEST_RESET_SECRET=test-reset-secret-local
 # Opcional para nube:
 # DATABASE_URL=postgresql://usuario:pass@host:5432/carm_master?sslmode=require
 # BIOMETRIC_ENCRYPTION_KEY=clave_de_32_bytes_para_aes_256_gcm
+# Detrás de un proxy inverso (nginx, balanceador, gateway de Docker): número de saltos de confianza
+# TRUST_PROXY=1
 ```
+El límite global de la API (200 solicitudes / 15 min en producción) se cuenta **por estudiante autenticado** y, sin sesión, por IP. Así los estudiantes que comparten la red de un hospital no agotan un cupo común. Detrás de un proxy define `TRUST_PROXY` para que la IP sea la del cliente.
 
 ### 2. Variables de Entorno del Frontend (`client/.env.local`)
 ```bash
 NEXT_PUBLIC_API_URL=http://localhost:5000/api
 NEXT_PUBLIC_SOCKET_URL=http://localhost:5000
 NEXT_PUBLIC_ENABLE_MOCK_CAMERA=false # Estrictamente false en producción
+JWT_SECRET=<el mismo valor que el backend> # Obligatorio: src/proxy.js valida la sesión de /course, /admin y /onboarding
 ```
+Sin el mismo `JWT_SECRET`, el proxy de Next rechaza la cookie y toda ruta protegida redirige a `/login` aunque el login responda 200. En Docker, `docker-compose.yml` se lo pasa al servicio `frontend` en tiempo de ejecución.
 
 ### 3. Docker Compose
 El archivo [`docker-compose.yml`](file:///c:/Oscar/ArcoC/docker-compose.yml) compila e interconecta:
@@ -486,15 +574,35 @@ El archivo [`docker-compose.yml`](file:///c:/Oscar/ArcoC/docker-compose.yml) com
 * Rutas `/health` y `/api/health` disponibles para balanceadores de carga y sondas de liveness/readiness.
 * El proceso captura señales `SIGTERM` y `SIGINT`, cerrando las conexiones HTTP, limpiando los sockets activos de proctoring y forzando la sincronización de la base de datos SQLite a disco antes de finalizar.
 
+### 5. Contenido Multimedia y Build WebGL del Simulador
+Los videos definitivos y el build de Unity son artefactos pesados: **no se versionan en git** (ver `.gitignore`) y se generan localmente antes de construir la imagen del frontend. `Dockerfile.frontend` copia `client/` completo, así que quedan incluidos en la imagen y Next.js los sirve desde el mismo origen que la plataforma.
+
+* **Videos** (`client/public/videos/moduloN/`): requieren `ffmpeg` (`winget install Gyan.FFmpeg`).
+  ```powershell
+  .\scripts\prepare-module-videos.ps1 -Module 1 -SourceDir "C:\Oscar\Src_arcoenc\Video\Master"
+  ```
+  Genera H.264 1080p (~4 Mbps, CRF limitado) + AAC 160 kbps con *faststart* (el índice va al inicio y la reproducción arranca sin descargar el final). Para el módulo 1: 86,7 / 103,4 / 90,2 MB frente a 234 / 283 / 244 MB de los masters.
+* **Build WebGL** (`client/public/webgl/`): abrir `Simulador_ArcoEnC_M01` (carpeta del monorepo) con **Unity 6000.6.10f1** (versión estándar del proyecto, con el módulo Web) y usar el menú **CArm → Build WebGL para ArcoC**, o por línea de comandos:
+  ```powershell
+  & "C:\Program Files\Unity\Hub\Editor\6000.6.10f1\Editor\Unity.exe" -batchmode -nographics -quit `
+    -projectPath .\Simulador_ArcoEnC_M01 -buildTarget WebGL `
+    -executeMethod CArmSimulator.EditorTools.ArcoCWebGLBuilder.BuildBatch -logFile build.log
+  ```
+  Usa la plantilla `Assets/WebGLTemplates/CArmEmbed` (canvas a pantalla completa y puente de mensajes con la plataforma). La compresión WebGL está desactivada, así que no se requieren cabeceras `Content-Encoding` especiales.
+* Si prefieres versionarlos, usa Git LFS: GitHub rechaza archivos de más de 100 MB.
+
 ---
 
 ## 13. Suite de Pruebas Automatizadas (Playwright)
 
-El proyecto cuenta con un conjunto integral de **51 pruebas E2E automatizadas** organizadas en **18 suites especializadas** ejecutadas con Playwright. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
+El proyecto cuenta con un conjunto integral de **63 pruebas E2E automatizadas** organizadas en **20 suites especializadas** ejecutadas con Playwright. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
 
 ```bash
-# Ejecutar todas las 18 suites E2E (51 pruebas completas)
+# Ejecutar todas las 20 suites E2E (63 pruebas completas)
 npx playwright test
+
+# Ejecutar la integración del módulo 1 (malla, videos y contrato con el simulador)
+npx playwright test tests/e2e/19-module1-simulator-integration.test.js
 
 # Ejecutar las herramientas de auditoría QoL y sellado criptográfico
 npx playwright test tests/e2e/18-admin-qol-and-audit-tools.test.js
@@ -509,12 +617,12 @@ npx playwright test tests/e2e/15-student-single-sitting-flow.test.js
 npx playwright test tests/e2e/16-student-spaced-interaction-flow.test.js
 ```
 
-### Matriz de Cobertura de Pruebas (51 Tests / 18 Suites)
+### Matriz de Cobertura de Pruebas (63 Tests / 20 Suites)
 
 | Suite | Archivo de Prueba | Escenarios Validados |
 | :--- | :--- | :--- |
 | **01** | **`01-course.test.js`** | Carga correcta del dashboard del curso tras login y verificación de landing page pública. |
-| **02** | **`02-simulator.test.js`** | Comunicación interactiva con el simulador y acreditación correcta de Puntos de Reserva en UI y BD. |
+| **02** | **`02-simulator.test.js`** | Partida simulada en la página de práctica (resultado igual al que reporta Unity) y acreditación de 10 Puntos de Reserva decidida por la API. |
 | **03** | **`03-exam-locked.test.js`** | Bloqueo estricto del examen si el navegador no cuenta con acceso a una cámara web funcional. |
 | **04** | **`04-exam-flow.test.js`** | Flujo completo de evaluación: inicio, carga de banco de preguntas, respuesta secuencial y calificación. |
 | **05** | **`05-proctoring-block.test.js`** | Suspensión automática del examen ante eventos simulados de violación biométrica. |
@@ -522,15 +630,17 @@ npx playwright test tests/e2e/16-student-spaced-interaction-flow.test.js
 | **07** | **`07-admin-dashboard.test.js`** | Aislamiento de rutas administrativas, bloqueo de estudiantes en `/admin`, renderizado de registros IES y descarga de constancias. |
 | **08** | **`08-security-and-verify.test.js`** | Inmutabilidad del costo de comodines en servidor, secuencialidad estricta de pasos de curso y validación pública en `/api/verify/:code`. |
 | **09** | **`09-auth-and-payload-chaos.test.js`** | **Caos de Autenticación y Payloads:** Inyecciones SQL (`' OR 1=1 --`), tipos malformados (objetos/arrays en login), tiempo constante anti-timing para correos inexistentes, tokens JWT truncados/falsificados/basura en cookies y headers, logout con expiración de cookies, validación estricta de descriptores biométricos (longitud != 128, NaN, IDs inexistentes) y verificación de cifrado AES-256-GCM en reposo. |
-| **10** | **`10-simulator-and-points-chaos.test.js`** | **Integridad Financiera y Simulador:** Rechazo de puntos negativos, nulos, NaN o flotantes (`-50`, `0`, `999999`); bloqueo de path traversal en `source` (`../../etc/passwd`); bloqueo de doble otorgamiento por re-envío en módulos ya aprobados; tope global inviolable de 500 Puntos de Reserva; y descarte defensivo de eventos `postMessage` fraudulentos o provenientes de orígenes no autorizados en el visor del simulador. |
+| **10** | **`10-simulator-and-points-chaos.test.js`** | **Integridad Financiera y Simulador:** Rechazo de puntos negativos, nulos, NaN o flotantes (`-50`, `0`, `999999`); bloqueo de path traversal en `source` (`../../etc/passwd`); bloqueo de doble otorgamiento por re-envío en módulos ya aprobados; tope global inviolable de 500 Puntos de Reserva; y descarte de mensajes `postMessage` con el formato real de Unity que no provienen del iframe del simulador (origen falso o la propia ventana), sin llamadas a la API. |
 | **11** | **`11-exam-resilience-and-edge-cases.test.js`** | **Resiliencia de Examen y Límites:** Rechazo de respuestas vacías, arrays malformados, preguntas duplicadas o IDs inexistentes; cumplimiento estricto del límite fatal de 3 intentos descalificando reintentos con HTTP 403 Forbidden; bloqueo de re-evaluación para exámenes ya aprobados con HTTP 409 Conflict; y validación atómica en servidor para uso de comodines (rechazo con puntos insuficientes o IDs de pregunta no válidos). |
 | **12** | **`12-proctoring-and-camera-edge-cases.test.js`** | **Anti-Cheat y Cámaras Virtuales:** Detección y bloqueo inmediato de streams de video falsificados (OBS Virtual Camera, ManyCam, vCam, Snap Camera) con despliegue de alerta en pantalla; rechazo y cierre de conexiones WebSocket de proctoring sin cookie JWT válida o con tokens corruptos; y escalamiento progresivo de advertencias visuales en el visor de examen antes del baneo definitivo. |
 | **13** | **`13-verification-and-admin-chaos.test.js`** | **Fuzzing de Verificación y Paginación Admin:** Resistencia de la ruta pública de verificación ante payloads XSS (`<script>alert(1)</script>`), strings de 5000+ caracteres y secuencias SQLi; respuesta estructurada de certificados emitidos verificando firma y prefijo binario `%PDF-`; denegación estricta (`403 Forbidden`) para generación de certificados de alumnos sin curso o examen completado; y sanitización de parámetros de paginación admin (`page=-5`, `limit=99999999`, strings) con clampeo automático seguro. |
 | **14** | **`14-frontend-resilience-and-video-scrubbing.test.js`** | **Resiliencia de UI y Anti-Adelanto de Video:** Interceptación y reversión automática de saltos temporales no autorizados en el reproductor de video educativo (`currentTime` scrub revertido al progreso real visto); preservación y restauración de respuestas marcadas en el examen tras recargas accidentales (`F5` o caída de pestaña) vía `sessionStorage`; y redirección forzada a `/login` al intentar navegar a rutas protegidas (`/course`, `/exam`, `/admin`) sin credenciales válidas. |
-| **15** | **`15-student-single-sitting-flow.test.js`** | **Recorrido Integral en una Sola Sentada (UI/UX):** Flujo completo continuo de estudiante nuevo desde el registro inicial y primer login, redirección automática a Onboarding, diligenciamiento de datos de filiación y aceptación de Habeas Data, enrolamiento biométrico facial (128 flotantes cifrados AES-256-GCM), bienvenida al Quirófano Virtual (0%), interacción y ganancia de Puntos de Reserva en simulador en vivo, avance secuencial por los 25 pasos del curso, desbloqueo reactivo del examen final, uso de comodín 50/50 consumiendo puntos, aprobación con 100%, renderizado del banner de graduado y validación de descarga de certificado oficial con cabecera binaria `%PDF-`. Incluye 11 capturas de pantalla de la UI/UX. |
-| **16** | **`16-student-spaced-interaction-flow.test.js`** | **Aprendizaje Espaciado Multisesión (UI/UX):** Simulación de un estudiante real a lo largo de un período de 27 días con intervalos de 3 días por sesión, avanzando a un ritmo del ~10% por sesión (2 a 3 pasos por interacción). En cada sesión se valida el cierre de sesión (`/api/logout`), la persistencia inmutable del progreso, los módulos aprobados y los puntos de reserva al reingresar por `/login`, la secuencialidad estricta (pasos posteriores bloqueados con candado), la finalización gradual de los módulos 1 al 5 y la graduación exitosa en la sesión 10 con examen aprobado y certificado generado. Incluye 7 capturas de pantalla de la experiencia visual. |
+| **15** | **`15-student-single-sitting-flow.test.js`** | **Recorrido Integral en una Sola Sentada (UI/UX):** Flujo completo continuo de estudiante nuevo desde el registro inicial y primer login, redirección automática a Onboarding, diligenciamiento de datos de filiación y aceptación de Habeas Data, enrolamiento biométrico facial (128 flotantes cifrados AES-256-GCM), bienvenida al Quirófano Virtual (0%), interacción y ganancia de Puntos de Reserva en simulador en vivo, avance secuencial por los 26 pasos del curso (jugando una partida en cada minijuego del módulo 1), desbloqueo reactivo del examen final, uso de comodín 50/50 consumiendo puntos, aprobación con 100%, renderizado del banner de graduado y validación de descarga de certificado oficial con cabecera binaria `%PDF-`. Incluye 11 capturas de pantalla de la UI/UX. |
+| **16** | **`16-student-spaced-interaction-flow.test.js`** | **Aprendizaje Espaciado Multisesión (UI/UX):** Simulación de un estudiante real a lo largo de un período de 27 días con intervalos de 3 días por sesión, avanzando a un ritmo del ~10% por sesión (2 a 3 pasos por interacción). En cada sesión se valida el cierre de sesión (`/api/logout`), la persistencia inmutable del progreso, los módulos aprobados y los puntos de reserva al reingresar por `/login`, la secuencialidad estricta (pasos posteriores bloqueados con candado), la finalización gradual de los módulos 1 al 5 (el módulo 1 con sus 3 videos y 3 partidas en el simulador) y la graduación exitosa en la sesión 10 con examen aprobado y certificado generado. Incluye 7 capturas de pantalla de la experiencia visual. |
 | **17** | **`17-admin-cohorts-and-compliance.test.js`** | **Gestión de Promociones, Correo de Inducción y Estándar IES:** Matriculación de estudiantes en promociones segregadas (*Promoción 1*, *Promoción 2*), verificación del despacho automático del correo de confirmación de matrícula con credenciales, fecha habilitada de inicio y guía de 5 pasos en `email_logs`; filtrado dinámico en tiempo real por cohorte en el panel administrativo; evaluación interactiva del Modal de Estándar IES demostrando rechazo fundamentado en estudiantes en curso y otorgamiento del veredicto *"CUMPLE EL ESTÁNDAR (Aval IES)"* para estudiantes graduados (6 criterios con check verde y código SHA-256); y exportación legal en archivo CSV para auditoría ministerial e IES con UTF-8 BOM. |
 | **18** | **`18-admin-qol-and-audit-tools.test.js`** | **Herramientas de Calidad de Vida (QoL) y Auditoría Ministerial:** Descarga y validación binaria (`%PDF-`) del Acta Colectiva / Libro de Calificaciones IES con membrete formal y códigos QR; sellado y cierre criptográfico inmutable de promociones mediante hash SHA-256 (con bloqueo `409 Conflict` ante intentos de re-cierre); reenvío instantáneo de correos de inducción y guía operativa con trazabilidad forense; y detección de rezago académico (+7 días) con cálculo automático en UI y despacho de recordatorios personalizados. |
+| **19** | **`19-module1-simulator-integration.test.js`** | **Módulo 1 de punta a punta:** la malla del cliente coincide con `COURSE_STEPS` del servidor (26 pasos, módulo 1 = 3 videos + 3 minijuegos); los videos definitivos se sirven con soporte de rangos y *faststart*; API del simulador (secuencia, escena/fase decididas por la API, niveles 10/5/0, idempotencia, fase y tiempo incoherentes rechazados, techo de 500, finalizar exige una partida, 409 tras finalizar, un estudiante no puede usar la partida de otro); contrato del iframe con un build simulado que habla el mismo protocolo que Unity (URL de lanzamiento, mensajes de otro intento ignorados, resultado registrado y acuse `phase-ack` devuelto al simulador); y, si existe `client/public/webgl`, el build real: Unity carga en el iframe, lee el lanzamiento y procesa el acuse en C#. |
+| **20** | **`20-exam-integrity-and-proctoring.test.js`** | **Integridad del examen y proctoring en servidor:** sin intento abierto no hay preguntas, envío ni comodín (409); el set de preguntas es fijo por intento; se rechazan respuestas fuera de `a`–`d` o de otras preguntas; la calificación no revela qué respuestas fueron correctas y cierra el intento; quien ya aprobó no puede abrir otro; la página muestra el motivo real cuando la API rechaza las preguntas o el inicio (curso incompleto, 3 intentos agotados) en lugar de caerse; y, por WebSocket, la supervisión suspende sin rostro, cierra el intento en el servidor y no castiga a quien terminó con `end_exam`. |
 
 ---
 

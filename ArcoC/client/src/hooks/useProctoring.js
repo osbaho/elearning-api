@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as faceapi from 'face-api.js';
 import { io } from 'socket.io-client';
-import { useAuth } from '../context/AuthContext';
 
 export function useProctoring() {
-  const { user } = useAuth();
   const videoRef = useRef(null);
   const [isModelLoaded, setIsModelLoaded] = useState(false);
   const [faceDetected, setFaceDetected] = useState(true);
@@ -24,19 +22,41 @@ export function useProctoring() {
   const workerRef = useRef(null);
   const isWorkerReadyRef = useRef(false);
   const isProcessingFrameRef = useRef(false);
+  // La sesión de supervisión en el servidor ('start_exam') se abre con el primer latido real,
+  // cuando la cámara y los modelos ya funcionan, para no contar como pérdida de señal la carga inicial.
+  const serverSessionRef = useRef(false);
+
+  const sendHeartbeat = useCallback((faceDetected, isMatch) => {
+    const socket = socketRef.current;
+    if (!socket || examSuspendedRef.current) return;
+    if (!serverSessionRef.current) {
+      socket.emit('start_exam');
+      serverSessionRef.current = true;
+    }
+    // isMatch null = sin descriptor registrado para comparar: el servidor no penaliza la identidad
+    socket.emit('proctoring_heartbeat', { faceDetected, isMatch });
+  }, []);
 
   // Initialize socket connection
   useEffect(() => {
-    const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 
+    const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL ||
       (process.env.NEXT_PUBLIC_API_URL ? process.env.NEXT_PUBLIC_API_URL.replace(/\/api\/?$/, '') : 'http://localhost:5000');
 
     socketRef.current = io(socketUrl, {
       withCredentials: true
     });
 
+    // Tras una reconexión el socket es otro: reabrir la sesión de supervisión si el examen sigue en curso
+    socketRef.current.on('connect', () => {
+      if (serverSessionRef.current && !examSuspendedRef.current) {
+        socketRef.current.emit('start_exam');
+      }
+    });
+
     socketRef.current.on('exam_suspended', (data) => {
       console.warn('Exam suspended by backend:', data.reason);
       examSuspendedRef.current = true;  // Update ref immediately
+      serverSessionRef.current = false; // el servidor ya cerró la sesión
       setExamSuspended(true);
       setProctoringWarning(null); // limpiar advertencia al suspender
       if (heartbeatInterval.current) {
@@ -137,17 +157,11 @@ export function useProctoring() {
           } else if (type === 'FRAME_PROCESSED') {
             isProcessingFrameRef.current = false;
             const detected = !!hasFace;
-            const matched = !!match;
+            // Sin descriptor registrado no hay con qué comparar: identidad "no evaluable" (null)
+            const matched = registeredDescriptorRef.current ? !!match : null;
             setFaceDetected(detected);
-            setIsFaceMatch(detected ? matched : false);
-
-            if (socketRef.current && !examSuspendedRef.current) {
-              socketRef.current.emit('proctoring_heartbeat', {
-                studentId: user?.id,
-                faceDetected: detected,
-                isMatch: matched
-              });
-            }
+            setIsFaceMatch(detected ? matched !== false : false);
+            sendHeartbeat(detected, detected ? matched : null);
           }
         };
 
@@ -173,20 +187,12 @@ export function useProctoring() {
       setWebcamError(false); // Do not block exam in mock mode
       setFaceDetected(true);
       setIsFaceMatch(true);
-      
-      heartbeatInterval.current = setInterval(() => {
-        if (!examSuspendedRef.current && socketRef.current) {
-          socketRef.current.emit('proctoring_heartbeat', {
-            studentId: user?.id,
-            faceDetected: true,
-            isMatch: true
-          });
-        }
-      }, 3000);
-      return;
+
+      heartbeatInterval.current = setInterval(() => sendHeartbeat(true, true), 3000);
+      return true;
     }
 
-    if (!videoRef.current) return;
+    if (!videoRef.current) return false;
     const videoEl = videoRef.current;
 
     try {
@@ -197,7 +203,7 @@ export function useProctoring() {
         console.warn('Virtual camera detected:', label);
         setWebcamError(true);
         stream.getTracks().forEach(t => t.stop());
-        return;
+        return false;
       }
       videoEl.srcObject = stream;
       setWebcamError(false);
@@ -239,7 +245,8 @@ export function useProctoring() {
                                              .withFaceDescriptor();
 
               const hasFace = !!detection;
-              let match = false;
+              // Sin descriptor registrado no hay con qué comparar: identidad "no evaluable" (null)
+              let match = registeredDescriptorRef.current ? false : null;
 
               // I-04: Use descriptor fetched from API endpoint (via registeredDescriptorRef)
               if (hasFace && registeredDescriptorRef.current) {
@@ -253,15 +260,8 @@ export function useProctoring() {
               }
 
               setFaceDetected(hasFace);
-              setIsFaceMatch(hasFace ? match : false);
-
-              if (socketRef.current) {
-                socketRef.current.emit('proctoring_heartbeat', {
-                  studentId: user?.id,
-                  faceDetected: hasFace,
-                  isMatch: match
-                });
-              }
+              setIsFaceMatch(hasFace ? match !== false : false);
+              sendHeartbeat(hasFace, hasFace ? match : null);
             } catch (detErr) {
               console.error('Main thread detection error:', detErr);
             }
@@ -271,29 +271,27 @@ export function useProctoring() {
 
       onPlayListenerRef.current = onPlay;
       videoEl.addEventListener('play', onPlay);
+      return true;
 
     } catch (err) {
+      // Sin cámara el examen no arranca (la página muestra el aviso) y no se consume un intento
       console.error('Webcam access denied or error', err);
       setWebcamError(true);
       setFaceDetected(false);
       setIsFaceMatch(false);
-
-      heartbeatInterval.current = setInterval(() => {
-        if (!examSuspendedRef.current && socketRef.current) {
-          socketRef.current.emit('proctoring_heartbeat', {
-            studentId: user?.id,
-            faceDetected: false,
-            isMatch: false
-          });
-        }
-      }, 3000);
+      return false;
     }
-  }, [user, DEV_MOCK_CAMERA, ensureMainThreadModels]); // A-09: uses refs and stable callback
+  }, [DEV_MOCK_CAMERA, ensureMainThreadModels, sendHeartbeat]); // A-09: uses refs and stable callbacks
 
   const stopProctoring = useCallback(() => {
     if (heartbeatInterval.current) {
       clearInterval(heartbeatInterval.current);
     }
+    // Cerrar la sesión de supervisión: sin latidos, el servidor la daría por perdida y suspendería
+    if (serverSessionRef.current && socketRef.current) {
+      socketRef.current.emit('end_exam');
+    }
+    serverSessionRef.current = false;
     if (workerRef.current) {
       workerRef.current.terminate();
       workerRef.current = null;

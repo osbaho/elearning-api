@@ -112,3 +112,6 @@ InitTestScene*.unity*
 
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
+
+# Burst output from WebGL builds (Unity 6000.6.x): regenerated on every build
+/[Dd]ata/

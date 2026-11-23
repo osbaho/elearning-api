@@ -19,6 +19,8 @@ import authRoutes from './server/routes/auth.js';
 import examRoutes from './server/routes/exam.js';
 import adminRoutes from './server/routes/admin.js';
 import progressRoutes from './server/routes/progress.js';
+import simulatorRoutes from './server/routes/simulator.js';
+import { COURSE_STEPS } from './server/config/curriculum.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,6 +30,12 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000')
   .split(',').map(o => o.trim());
 
 const app = express();
+// Detrás de un proxy inverso (nginx, balanceador, Docker con gateway) define TRUST_PROXY
+// (p. ej. "1" = un salto) para que req.ip sea la IP real del cliente.
+if (process.env.TRUST_PROXY) {
+  const trustProxy = process.env.TRUST_PROXY;
+  app.set('trust proxy', /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy === 'true' ? true : trustProxy);
+}
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
@@ -109,6 +117,7 @@ app.use('/api', authRoutes);
 app.use('/api', examRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/progress', progressRoutes);
+app.use('/api/simulator', simulatorRoutes);
 
 // Test isolation endpoint (strictly disabled in production)
 // G-3: Requiere el secret si TEST_RESET_SECRET está configurado con valor no local
@@ -141,9 +150,12 @@ if (process.env.NODE_ENV !== 'production') {
         const examScore = req.body?.exam_score !== undefined ? req.body.exam_score : null;
 
         await run(
-          'UPDATE students SET exam_score = ?, exam_attempts = ?, reserve_points = ?, is_onboarded = ?, face_descriptor = ?, proctoring_incidents = 0, focus_violations = 0 WHERE id = ?',
+          'UPDATE students SET exam_score = ?, exam_attempts = ?, reserve_points = ?, is_onboarded = ?, face_descriptor = ?, proctoring_incidents = 0, focus_violations = 0, exam_in_progress = 0, exam_question_ids = NULL WHERE id = ?',
           [examScore, examAttempts, reservePoints, isOnboarded, faceDesc, student.id]
         );
+        if (typeof req.body?.name === 'string' && req.body.name.trim()) {
+          await run('UPDATE students SET name = ? WHERE id = ?', [req.body.name.trim(), student.id]);
+        }
         if (req.body?.id_number) {
           await run('UPDATE students SET id_number = ?, institution = ?, cohort = ? WHERE id = ?', [
             req.body.id_number,
@@ -154,17 +166,11 @@ if (process.env.NODE_ENV !== 'production') {
         }
         await run('DELETE FROM course_progress WHERE student_id = ?', [student.id]);
         await run('DELETE FROM exam_logs WHERE student_id = ?', [student.id]);
+        await run('DELETE FROM simulator_attempts WHERE student_id = ?', [student.id]);
 
         // Opcional para pruebas: marcar curso completo
         if (req.body?.complete_course) {
-          const ALL_STEPS = [
-            'm1_v1', 'm1_s1', 'm1_v2', 'm1_s2', 'm1_vr',
-            'm2_v1', 'm2_s1', 'm2_v2', 'm2_s2', 'm2_vr',
-            'm3_v1', 'm3_s1', 'm3_v2', 'm3_s2', 'm3_vr',
-            'm4_v1', 'm4_s1', 'm4_v2', 'm4_s2', 'm4_vr',
-            'm5_v1', 'm5_s1', 'm5_v2', 'm5_s2', 'm5_vr'
-          ];
-          for (const step of ALL_STEPS) {
+          for (const step of COURSE_STEPS) {
             await run('INSERT OR IGNORE INTO course_progress (student_id, module_id, status) VALUES (?, ?, ?)', [student.id, step, 'completed']);
           }
         }
@@ -251,13 +257,20 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('proctoring_heartbeat', ({ faceDetected, isMatch }) => {
+  socket.on('proctoring_heartbeat', ({ faceDetected, isMatch } = {}) => {
     const session = activeExams.get(socket.id);
     if (session) {
       session.lastHeartbeat = Date.now();
       session.faceDetected = !!faceDetected;
-      session.isMatch = isMatch !== undefined ? !!isMatch : true;
+      // null/undefined: el cliente no pudo evaluar la identidad (sin descriptor registrado) → no penaliza
+      session.isMatch = isMatch === undefined || isMatch === null ? true : !!isMatch;
     }
+  });
+
+  // El cliente cierra la supervisión al enviar el examen o salir de él; sin esto el monitor
+  // interpretaría el fin de los latidos como pérdida de señal y suspendería al estudiante.
+  socket.on('end_exam', () => {
+    activeExams.delete(socket.id);
   });
 
   socket.on('disconnect', () => {
@@ -289,7 +302,10 @@ const proctoringMonitorInterval = setInterval(() => {
         .catch(err => console.error(err));
       run('INSERT INTO exam_logs (student_id, event_type, detail) VALUES (?, ?, ?)', [session.studentId, 'PROCTORING_EXPIRED', 'Pérdida de señal o desconexión por más de 30s'])
         .catch(err => console.error(err));
-      
+      // La suspensión cierra el intento en el servidor: ya no se puede enviar por la API
+      run('UPDATE students SET exam_in_progress = 0 WHERE id = ?', [session.studentId])
+        .catch(err => console.error(err));
+
       io.to(socketId).emit('exam_suspended', { reason: 'Pérdida prolongada de conexión con la cámara de supervisión (Heartbeat lost)' });
       activeExams.delete(socketId);
       continue;
@@ -310,6 +326,8 @@ const proctoringMonitorInterval = setInterval(() => {
         run('UPDATE students SET proctoring_incidents = proctoring_incidents + 1 WHERE id = ?', [session.studentId])
           .catch(err => console.error(err));
         run('INSERT INTO exam_logs (student_id, event_type, detail) VALUES (?, ?, ?)', [session.studentId, 'PROCTORING_SUSPENDED', reason])
+          .catch(err => console.error(err));
+        run('UPDATE students SET exam_in_progress = 0 WHERE id = ?', [session.studentId])
           .catch(err => console.error(err));
 
         io.to(socketId).emit('exam_suspended', { reason });

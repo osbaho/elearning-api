@@ -1,4 +1,5 @@
 import { run, get, all } from '../config/db.js';
+import { TOTAL_COURSE_STEPS } from '../config/curriculum.js';
 
 /**
  * Servicio de mensajería y notificaciones institucionales de C-Arm Master.
@@ -188,7 +189,7 @@ export async function sendProgressReminderEmail({ studentId, name, email, cohort
     <p>Estimado(a) <strong>${name}</strong>,</p>
     <p>Te recordamos que tu proceso de certificación en Arco en C y Radioprotección Quirúrgica se encuentra activo. El estándar institucional IES requiere culminar el 100% de la malla formativa para habilitar tu evaluación final.</p>
     <div class="progress-box">
-      <div>📊 <strong>Tu Progreso Actual:</strong> ${completedSteps} de 25 pasos obligatorios completados (${Math.round((completedSteps / 25) * 100)}%).</div>
+      <div>📊 <strong>Tu Progreso Actual:</strong> ${completedSteps} de ${TOTAL_COURSE_STEPS} pasos obligatorios completados (${Math.round((completedSteps / TOTAL_COURSE_STEPS) * 100)}%).</div>
       <div style="margin-top: 8px; font-size: 13px; color: #cbd5e1;">Aún tienes tiempo para completar tus módulos teóricos, prácticas en simulador y examen oficial.</div>
     </div>
     <a href="${loginUrl}" class="btn">Retomar mi Curso Ahora ▶</a>
@@ -206,7 +207,7 @@ export async function sendProgressReminderEmail({ studentId, name, email, cohort
       [studentId, email.toLowerCase().trim(), subject, htmlContent]
     );
 
-    console.log(`📧 [EMAIL AUDIT] Recordatorio de avance enviado a ${email} (Completados: ${completedSteps}/25)`);
+    console.log(`📧 [EMAIL AUDIT] Recordatorio de avance enviado a ${email} (Completados: ${completedSteps}/${TOTAL_COURSE_STEPS})`);
 
     return {
       success: true,

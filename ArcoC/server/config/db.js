@@ -194,6 +194,9 @@ export async function initDb() {
   await alterTable(`ALTER TABLE students ADD COLUMN face_descriptor TEXT`);
   await alterTable(`ALTER TABLE students ADD COLUMN cohort TEXT DEFAULT 'Promoción 1'`);
   await alterTable(`ALTER TABLE students ADD COLUMN start_date TEXT`);
+  // Intento de examen en curso: lo abre /start-exam con su set de preguntas y lo cierra /submit-exam
+  await alterTable(`ALTER TABLE students ADD COLUMN exam_in_progress INTEGER DEFAULT 0`);
+  await alterTable(`ALTER TABLE students ADD COLUMN exam_question_ids TEXT`);
 
   await run(`
     CREATE TABLE IF NOT EXISTS course_progress (
@@ -255,6 +258,29 @@ export async function initDb() {
     );
   `);
 
+  // Intentos del simulador Unity WebGL: uno por partida (1 paso práctico = 1 fase).
+  // Guarda la telemetría que reporta Unity y los puntos que decidió la API.
+  await run(`
+    CREATE TABLE IF NOT EXISTS simulator_attempts (
+      id TEXT PRIMARY KEY,
+      student_id INTEGER NOT NULL,
+      step_id TEXT NOT NULL,
+      scene TEXT NOT NULL,
+      phase INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'started',
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      score INTEGER,
+      max_score INTEGER,
+      passed INTEGER,
+      error_count INTEGER,
+      dose_msv REAL,
+      time_seconds REAL,
+      tier TEXT,
+      points_awarded INTEGER
+    );
+  `);
+
   await alterTable(`ALTER TABLE course_progress ADD COLUMN certificate_code TEXT`);
 
   // Índices para optimización de rendimiento
@@ -267,6 +293,7 @@ export async function initDb() {
   await run(`CREATE INDEX IF NOT EXISTS idx_students_cohort ON students(cohort);`);
   await run(`CREATE INDEX IF NOT EXISTS idx_email_logs_student ON email_logs(student_id);`);
   await run(`CREATE INDEX IF NOT EXISTS idx_email_logs_email ON email_logs(recipient_email);`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_simulator_attempts_student_step ON simulator_attempts(student_id, step_id);`);
 
   // Log rotation: eliminar logs de más de 30 días para evitar crecimiento infinito
   try {

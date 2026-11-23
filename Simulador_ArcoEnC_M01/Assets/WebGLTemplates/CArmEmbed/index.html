@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes">
+    <title>{{{ PRODUCT_NAME }}}</title>
+    <style>
+      html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0a0f1e; }
+      #unity-canvas { width: 100%; height: 100%; display: block; background: #0a0f1e; outline: none; }
+      #carm-loading {
+        position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 12px; color: #00f0ff; background: #0a0f1e; font: 600 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      #carm-progress { width: min(320px, 70%); height: 6px; border-radius: 3px; background: rgba(0, 240, 255, 0.15); overflow: hidden; }
+      #carm-progress-fill { width: 0%; height: 100%; background: #00f0ff; transition: width 0.2s ease; }
+      #carm-error {
+        display: none; position: fixed; left: 12px; right: 12px; bottom: 12px; padding: 10px 12px; border-radius: 6px;
+        background: #7f1d1d; color: #fff; font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="unity-canvas" tabindex="-1"></canvas>
+    <div id="carm-loading" role="status">
+      <div>Cargando simulador…</div>
+      <div id="carm-progress"><div id="carm-progress-fill"></div></div>
+    </div>
+    <div id="carm-error" role="alert"></div>
+    <script>
+      // Plantilla "CArmEmbed": el build se muestra dentro del iframe de la plataforma ArcoC,
+      // servido desde el mismo origen (/webgl/). Protocolo de mensajes:
+      //   build → plataforma: { source: "carm-sim", v: 1, type: "ready" | "load-error" | "phase-result", ... }
+      //   plataforma → build: { source: "carm-host", v: 1, type: "phase-ack" | "phase-ack-error", ... }
+      // Los mensajes de la plataforma se reenvían a ScormBridge.OnHostMessage dentro de Unity.
+      var HOST_OBJECT = "ScormBridge";
+      var embedded = window.parent && window.parent !== window;
+
+      function notifyHost(message) {
+        if (!embedded) return;
+        message.source = "carm-sim";
+        message.v = 1;
+        window.parent.postMessage(message, window.location.origin);
+      }
+
+      function showError(message) {
+        var box = document.querySelector("#carm-error");
+        box.textContent = message;
+        box.style.display = "block";
+      }
+
+      function unityShowBanner(message, type) {
+        if (type === "error") showError(message);
+        else console.warn("[Unity] " + message);
+      }
+
+      var canvas = document.querySelector("#unity-canvas");
+      var buildUrl = "Build";
+      var loaderUrl = buildUrl + "/{{{ LOADER_FILENAME }}}";
+      var config = {
+        arguments: [],
+#if PROGRESSIVE_ASSET_LOADING
+        primaryDataUrls: {{{ JSON.stringify(PRIMARY_DATA_FILES) }}},
+        secondaryDataUrls: {{{ JSON.stringify(SECONDARY_DATA_FILES) }}},
+#else
+        dataUrl: buildUrl + "/{{{ DATA_FILENAME }}}",
+#endif
+        frameworkUrl: buildUrl + "/{{{ FRAMEWORK_FILENAME }}}",
+#if USE_WASM
+        codeUrl: buildUrl + "/{{{ CODE_FILENAME }}}",
+#endif
+#if SYMBOLS_FILENAME
+        symbolsUrl: buildUrl + "/{{{ SYMBOLS_FILENAME }}}",
+#endif
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: {{{ JSON.stringify(COMPANY_NAME) }}},
+        productName: {{{ JSON.stringify(PRODUCT_NAME) }}},
+        productVersion: {{{ JSON.stringify(PRODUCT_VERSION) }}},
+        showBanner: unityShowBanner,
+      };
+
+      var script = document.createElement("script");
+      script.src = loaderUrl;
+      script.onload = function () {
+        var loading = document.querySelector("#carm-loading");
+        var progressFill = document.querySelector("#carm-progress-fill");
+
+        createUnityInstance(canvas, config, function (progress) {
+          progressFill.style.width = Math.round(100 * progress) + "%";
+        }).then(function (unityInstance) {
+          loading.style.display = "none";
+
+          window.addEventListener("message", function (event) {
+            if (event.source !== window.parent || event.origin !== window.location.origin) return;
+            var data = event.data;
+            if (!data || data.source !== "carm-host" || data.v !== 1) return;
+            unityInstance.SendMessage(HOST_OBJECT, "OnHostMessage", JSON.stringify(data));
+          });
+
+          notifyHost({ type: "ready" });
+        }).catch(function (message) {
+          loading.style.display = "none";
+          showError(String(message));
+          notifyHost({ type: "load-error", error: String(message) });
+        });
+      };
+      script.onerror = function () {
+        showError("No se pudo descargar el simulador.");
+        notifyHost({ type: "load-error", error: "No se pudo descargar el loader de Unity." });
+      };
+      document.body.appendChild(script);
+    </script>
+  </body>
+</html>

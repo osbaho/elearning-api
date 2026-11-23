@@ -6,9 +6,9 @@ import { authenticateToken } from '../middleware/auth.js';
 import { generateCertificatePDF } from '../utils/certificate.js';
 import { generateCohortActaPDF } from '../utils/cohortActa.js';
 import { sendWelcomeInductionEmail, sendProgressReminderEmail } from '../services/emailService.js';
+import { TOTAL_COURSE_STEPS, isCourseStep, countCompletedCourseSteps } from '../config/curriculum.js';
 
 const router = express.Router();
-const TOTAL_COURSE_MODULES = 25;
 
 // Middleware to check admin role
 async function checkAdmin(req, res, next) {
@@ -278,7 +278,7 @@ router.get('/compliance/:studentId', authenticateToken, checkAdmin, async (req, 
       WHERE student_id = ? AND status = 'completed'
     `, [studentId]);
 
-    const completedCurricularSteps = progressRecords.filter(p => p.module_id !== 'exam');
+    const completedCurricularSteps = progressRecords.filter(p => isCourseStep(p.module_id));
     const examRecord = progressRecords.find(p => p.module_id === 'exam');
 
     // 1. Identificación y Registro Biométrico
@@ -294,15 +294,15 @@ router.get('/compliance/:studentId', authenticateToken, checkAdmin, async (req, 
         : 'Falta registro de documento de identidad o captura facial biométrica obligatoria.'
     };
 
-    // 2. Culminación Curricular (25 pasos obligatorios)
-    const c2_met = completedCurricularSteps.length >= TOTAL_COURSE_MODULES;
+    // 2. Culminación Curricular (todos los pasos obligatorios de la malla)
+    const c2_met = completedCurricularSteps.length >= TOTAL_COURSE_STEPS;
     const c2 = {
       code: 'STD_CURRICULUM',
       title: 'Completitud de Módulos Curriculares (100%)',
-      required: `25 de 25 pasos obligatorios completados secuencialmente sin saltos anti-adelanto.`,
+      required: `${TOTAL_COURSE_STEPS} de ${TOTAL_COURSE_STEPS} pasos obligatorios completados secuencialmente sin saltos anti-adelanto.`,
       met: c2_met,
       status: c2_met ? 'CUMPLIDO' : 'EN PROCESO',
-      details: `${completedCurricularSteps.length} de ${TOTAL_COURSE_MODULES} pasos completados (${Math.round((completedCurricularSteps.length / TOTAL_COURSE_MODULES) * 100)}%).`
+      details: `${completedCurricularSteps.length} de ${TOTAL_COURSE_STEPS} pasos completados (${Math.round((completedCurricularSteps.length / TOTAL_COURSE_STEPS) * 100)}%).`
     };
 
     // 3. Rendimiento Académico en Examen de Certificación
@@ -439,13 +439,16 @@ router.get('/export-audit', authenticateToken, checkAdmin, async (req, res) => {
     if (studentIds.length > 0) {
       const placeholders = studentIds.map(() => '?').join(',');
       const stepRows = await all(`
-        SELECT student_id, COUNT(*) as steps 
-        FROM course_progress 
-        WHERE student_id IN (${placeholders}) AND module_id != 'exam' AND status = 'completed'
-        GROUP BY student_id
+        SELECT student_id, module_id
+        FROM course_progress
+        WHERE student_id IN (${placeholders}) AND status = 'completed'
       `, studentIds);
+      const modulesByStudent = {};
       for (const sr of stepRows) {
-        stepCounts[sr.student_id] = sr.steps;
+        (modulesByStudent[sr.student_id] ||= []).push(sr.module_id);
+      }
+      for (const [sid, moduleIds] of Object.entries(modulesByStudent)) {
+        stepCounts[sid] = countCompletedCourseSteps(moduleIds);
       }
     }
 
@@ -475,7 +478,7 @@ router.get('/export-audit', authenticateToken, checkAdmin, async (req, res) => {
       const steps = stepCounts[r.id] || 0;
       const score = r.exam_score !== null ? r.exam_score : 'Pendiente';
       const incidents = (r.proctoring_incidents || 0) + (r.focus_violations || 0);
-      const isCertified = (r.exam_score ?? 0) >= 90 && steps >= 25 && !!r.is_onboarded;
+      const isCertified = (r.exam_score ?? 0) >= 90 && steps >= TOTAL_COURSE_STEPS && !!r.is_onboarded;
       const cumpleEstandar = isCertified ? 'SI (Aprobado)' : 'NO (En Proceso / No Cumple)';
 
       const values = [
@@ -487,7 +490,7 @@ router.get('/export-audit', authenticateToken, checkAdmin, async (req, res) => {
         `"${(r.institution || 'Sin asignar').replace(/"/g, '""')}"`,
         `"${(r.cohort || 'Promoción 1').replace(/"/g, '""')}"`,
         r.start_date || 'Inmediato',
-        `${steps}/25`,
+        `${steps}/${TOTAL_COURSE_STEPS}`,
         score,
         r.exam_attempts || 0,
         incidents,
@@ -614,10 +617,10 @@ router.post('/send-reminder/:studentId', authenticateToken, checkAdmin, async (r
     const student = await get('SELECT id, name, email, cohort FROM students WHERE id = ?', [studentId]);
     if (!student) return res.status(404).json({ error: 'Estudiante no encontrado.' });
 
-    const stepRow = await get(`
-      SELECT COUNT(*) as c FROM course_progress WHERE student_id = ? AND module_id != 'exam' AND status = 'completed'
+    const stepRows = await all(`
+      SELECT module_id FROM course_progress WHERE student_id = ? AND status = 'completed'
     `, [studentId]);
-    const completedSteps = parseInt(stepRow?.c || 0, 10);
+    const completedSteps = countCompletedCourseSteps(stepRows.map(r => r.module_id));
 
     await sendProgressReminderEmail({
       studentId: student.id,

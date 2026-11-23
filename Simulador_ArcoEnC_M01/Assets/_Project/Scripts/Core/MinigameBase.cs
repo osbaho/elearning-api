@@ -44,6 +44,7 @@ namespace CArmSimulator.Core
 
         // IScorable Properties
         public int CurrentScore => currentScore;
+        public int ErrorCount => errorCount;
         public int MaxScore => config != null ? config.maxScore : 100;
         public float NormalizedScore => MaxScore > 0 ? (float)currentScore / MaxScore : 0f;
 

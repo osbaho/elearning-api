@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { resetStudentState } from '../helpers/loginHelper.js';
+import { completeStep } from '../helpers/simulatorHelper.js';
 import { initDb, all } from '../../server/config/db.js';
 import fs from 'fs';
 import path from 'path';
@@ -99,7 +100,7 @@ test.describe('Student Single-Sitting Complete Journey (UI/UX & Logic)', () => {
     // Verificar estado inicial: 0% de progreso y Examen bloqueado
     const progressFill = page.locator('.progress-bar-fill');
     await expect(progressFill).toHaveAttribute('aria-valuenow', '0');
-    await expect(page.locator('.course-progress-container')).toContainText('0 / 25 pasos');
+    await expect(page.locator('.course-progress-container')).toContainText('0 / 26 pasos');
     
     const examNavBtn = page.locator('.sidebar-nav-exam');
     await expect(examNavBtn).toBeDisabled();
@@ -110,20 +111,25 @@ test.describe('Student Single-Sitting Complete Journey (UI/UX & Logic)', () => {
     await page.request.post('http://localhost:5000/api/progress/m1_v1');
 
     // Paso 2: Minijuego en Simulador interactivo
+    // Saldo inicial de práctica vía endpoint de desarrollo (140 pts) para poder probar luego el comodín 50/50
+    await page.request.post('http://localhost:5000/api/add-points', { data: { points: 100, source: 'm1_s1' } });
+    await page.request.post('http://localhost:5000/api/add-points', { data: { points: 40, source: 'm1_s1' } });
+
+    // Aislar la prueba del build WebGL real (si existe): la vista usa el modo sin build
+    await page.route('**/webgl/**', route => route.abort());
     await page.goto('/course/practice/m1_s1');
     await page.waitForSelector('.simulator-grid', { timeout: 10000 });
-    
-    // Simular acumulación de puntos de práctica (ganar 150 pts para poder usar comodín en examen)
-    await page.click('button:has-text("🏆 Simular +50 pts")');
-    await page.waitForTimeout(300);
-    await page.click('button:has-text("🏆 Simular +50 pts")');
-    await page.waitForTimeout(300);
-    await page.click('button:has-text("🏆 Simular +50 pts")');
-    await page.waitForTimeout(300);
+
+    // Una partida perfecta (resultado simulado como el que reporta Unity) suma 10 pts
+    await Promise.all([
+      page.waitForResponse(res => res.url().includes('/simulator/attempts/') && res.url().endsWith('/result') && res.status() === 200),
+      page.click('button:has-text("Simular partida perfecta")'),
+    ]);
 
     // Verificar actualización reactiva del widget de puntos
     const pointsWidget = page.locator('.points-display');
     await expect(pointsWidget).toHaveText('150');
+    await expect(page.locator('#session-points')).toHaveText('+10');
     await saveScreenshot(page, '06-simulator-interactive-practice.png');
 
     // Finalizar práctica y confirmar modal
@@ -135,35 +141,34 @@ test.describe('Student Single-Sitting Complete Journey (UI/UX & Logic)', () => {
     // Regresar al curso
     await page.goto('/course');
     await page.waitForSelector('.course-layout-container');
-    await expect(page.locator('.course-progress-container')).toContainText('2 / 25 pasos');
+    await expect(page.locator('.course-progress-container')).toContainText('2 / 26 pasos');
 
-    // 8. Avanzar secuencialmente el resto del curso hasta el 100% (Pasos 3 a 25)
+    // 8. Avanzar secuencialmente el resto del curso hasta el 100% (Pasos 3 a 26)
+    //    Los minijuegos del módulo 1 exigen una partida terminada (completeStep la juega vía API)
     const ALL_REMAINING_STEPS = [
-      'm1_v2', 'm1_s2', 'm1_vr',
+      'm1_v2', 'm1_s2', 'm1_v3', 'm1_s3',
       'm2_v1', 'm2_s1', 'm2_v2', 'm2_s2', 'm2_vr',
       'm3_v1', 'm3_s1', 'm3_v2', 'm3_s2', 'm3_vr',
       'm4_v1', 'm4_s1', 'm4_v2', 'm4_s2', 'm4_vr',
       'm5_v1', 'm5_s1', 'm5_v2', 'm5_s2', 'm5_vr'
     ];
 
-    for (let i = 0; i < ALL_REMAINING_STEPS.length; i++) {
-      const stepId = ALL_REMAINING_STEPS[i];
-      const res = await page.request.post(`http://localhost:5000/api/progress/${stepId}`);
-      expect(res.ok()).toBeTruthy();
+    for (const stepId of ALL_REMAINING_STEPS) {
+      await completeStep(page.request, stepId);
 
-      // En el punto medio (Módulo 3, ~48%), capturar estado visual
+      // En el punto medio (Módulo 3, 50%), capturar estado visual
       if (stepId === 'm3_s1') {
         await page.reload();
         await page.waitForSelector('.course-layout-container');
-        await expect(page.locator('.course-progress-container')).toContainText('12 / 25 pasos');
-        await saveScreenshot(page, '07-course-midway-progress-48percent.png');
+        await expect(page.locator('.course-progress-container')).toContainText('13 / 26 pasos');
+        await saveScreenshot(page, '07-course-midway-progress-50percent.png');
       }
     }
 
     // 9. Verificar estado 100% completado y desbloqueo del Examen Final
     await page.reload();
     await page.waitForSelector('.course-layout-container');
-    await expect(page.locator('.course-progress-container')).toContainText('25 / 25 pasos');
+    await expect(page.locator('.course-progress-container')).toContainText('26 / 26 pasos');
     await expect(page.locator('.course-progress-container')).toContainText('100% completado');
     await expect(examNavBtn).toBeEnabled();
     await saveScreenshot(page, '08-course-100percent-unlocked.png');

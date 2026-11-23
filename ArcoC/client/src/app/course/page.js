@@ -40,9 +40,14 @@ export default function Course() {
           ...prev,
           completedModules: Array.from(new Set([...(prev?.completedModules || []), moduleId]))
         }));
+      } else {
+        let message = `error ${res.status}`;
+        try { message = (await res.json()).error || message; } catch { /* sin cuerpo JSON */ }
+        addToast(`No se pudo registrar el video: ${message} Recarga la página para intentarlo de nuevo.`, 'error');
       }
     } catch (err) {
       console.error('Error marking module as complete:', err);
+      addToast('Error de conexión al registrar el video. Recarga la página para intentarlo de nuevo.', 'error');
     }
   };
 
@@ -247,7 +252,8 @@ export default function Course() {
                 <h2 className="title-lg">{moduleData.title}</h2>
                 <div className="cards-grid grid-1">
                   {moduleData.items.map((item, index) => {
-                    const globalIndex = (moduleData.id - 1) * 5 + index;
+                    // Posición real en la malla: los módulos no tienen todos la misma cantidad de pasos
+                    const globalIndex = ALL_STEPS.indexOf(item.key);
                     const isCompleted = completedModules.includes(item.key);
                     
                     let isLocked = false;

@@ -10,8 +10,18 @@ import useSWR from 'swr';
 const OPTION_KEYS = ['a', 'b', 'c', 'd'];
 const OPTION_LABEL = { a: 'A', b: 'B', c: 'C', d: 'D' };
 
-// A-12: Module-level fetcher
-const fetcher = (url) => fetch(url, { credentials: 'include' }).then(res => res.json());
+// A-12: Module-level fetcher. Una respuesta de error (403 curso incompleto, 409 sin intento,
+// 429 límite de peticiones, sesión vencida…) se lanza como error con el mensaje del servidor:
+// nunca debe llegar a la UI como si fuera la lista de preguntas.
+const fetcher = async (url) => {
+  const res = await fetch(url, { credentials: 'include' });
+  let data = null;
+  try { data = await res.json(); } catch { /* respuesta sin cuerpo JSON */ }
+  if (!res.ok) {
+    throw new Error(data?.error || `No se pudieron cargar las preguntas (error ${res.status}).`);
+  }
+  return Array.isArray(data) ? data : [];
+};
 
 export default function ExamPage() {
   const router = useRouter();
@@ -24,6 +34,8 @@ export default function ExamPage() {
   const [submitError, setSubmitError] = useState(null);
   const [downloadingCert, setDownloadingCert] = useState(false);
   const [startingExam, setStartingExam] = useState(false);
+  const [startError, setStartError] = useState(null);
+  const [attemptInfo, setAttemptInfo] = useState(null);
   const optionRefs = useRef({});
 
   const completedModules = user?.completedModules || [];
@@ -31,10 +43,16 @@ export default function ExamPage() {
 
   const { videoRef, isModelLoaded, faceDetected, isFaceMatch, examSuspended, proctoringWarning, webcamError, isMockMode, startProctoring, stopProctoring } = useProctoring();
 
-  const { data: questions = [], isLoading: loadingQuestions } = useSWR(
-    alreadyCompleted ? null : `${process.env.NEXT_PUBLIC_API_URL}/questions`,
+  // Las preguntas pertenecen al intento que abre /start-exam: solo se piden con el examen iniciado
+  const {
+    data: questions = [],
+    error: questionsError,
+    isLoading: loadingQuestions,
+    mutate: reloadQuestions,
+  } = useSWR(
+    examStarted && !alreadyCompleted ? `${process.env.NEXT_PUBLIC_API_URL}/questions` : null,
     fetcher,
-    { revalidateOnFocus: false, dedupingInterval: 3600000 }
+    { revalidateOnFocus: false, dedupingInterval: 3600000, shouldRetryOnError: false }
   );
 
   // ── Load state from sessionStorage ────────────────────────────────────────
@@ -52,6 +70,19 @@ export default function ExamPage() {
   useEffect(() => {
     sessionStorage.setItem('exam_answers', JSON.stringify(answers));
   }, [answers]);
+
+  // Respuestas y comodines restaurados de sessionStorage solo valen para las preguntas de este intento
+  useEffect(() => {
+    if (questions.length === 0) return;
+    const ids = new Set(questions.map(q => String(q.id)));
+    const prune = (obj) => {
+      const kept = Object.fromEntries(Object.entries(obj).filter(([id]) => ids.has(id)));
+      return Object.keys(kept).length === Object.keys(obj).length ? obj : kept;
+    };
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setAnswers(prune);
+    setEliminatedOptions(prune);
+  }, [questions]);
 
   useEffect(() => {
     sessionStorage.setItem('exam_eliminated', JSON.stringify(eliminatedOptions));
@@ -129,17 +160,33 @@ export default function ExamPage() {
 
   const handleStart = async () => {
     setStartingExam(true);
+    setStartError(null);
     try {
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/start-exam`, {
+      // 1. Cámara primero: si no funciona, no se consume un intento (la página muestra el aviso)
+      const cameraReady = await startProctoring();
+      if (!cameraReady) return;
+
+      // 2. Abrir el intento en el servidor (fija las preguntas y descuenta 1 de 3 intentos)
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/start-exam`, {
         method: 'POST',
         credentials: 'include'
       });
+      let data = null;
+      try { data = await res.json(); } catch { /* sin cuerpo JSON */ }
+      if (!res.ok) {
+        stopProctoring();
+        setStartError(data?.error || `No se pudo iniciar el examen (error ${res.status}).`);
+        return;
+      }
+      setAttemptInfo({ used: data?.attemptsUsed, max: data?.maxAttempts });
+      setExamStarted(true);
     } catch (err) {
-      console.error('Error logging exam start:', err);
+      console.error('Error starting exam:', err);
+      stopProctoring();
+      setStartError('Error de conexión al iniciar el examen.');
+    } finally {
+      setStartingExam(false);
     }
-    await startProctoring();
-    setExamStarted(true);
-    setStartingExam(false);
   };
 
   const handleOptionChange = (questionId, option) => {
@@ -314,20 +361,26 @@ export default function ExamPage() {
                 <div className="question-card">
                   <h3>Instrucciones del Examen</h3>
                   <p className="mt-16">
-                    Responde <strong>{questions.length} preguntas</strong> sobre radioprotección y operación del Arco en C.
-                    Necesitas <strong>90%</strong> para aprobar. Puedes usar el comodín 🪄 <strong>50/50</strong> consumiendo
+                    Responderás un set aleatorio de preguntas sobre radioprotección y operación del Arco en C.
+                    Necesitas <strong>90%</strong> para aprobar y tienes un máximo de <strong>3 intentos</strong>: cada vez que
+                    pulsas &quot;Empezar Examen&quot; se descuenta uno. Puedes usar el comodín 🪄 <strong>50/50</strong> consumiendo
                     100 Puntos de Reserva por pregunta.
                   </p>
                   <p className="text-secondary mt-16 text-sm">
                     Asegúrate de tener buena iluminación. La cámara web estará encendida durante todo el examen.
                   </p>
+                  {startError && (
+                    <div id="exam-start-error" className="camera-error-card mt-16" role="alert">
+                      <div className="camera-error-title text-sm">⚠️ {startError}</div>
+                    </div>
+                  )}
                   <button
                     id="start-exam-btn"
                     className="btn btn-primary mt-16"
                     onClick={handleStart}
-                    disabled={loadingQuestions || startingExam}
+                    disabled={startingExam}
                   >
-                    {loadingQuestions ? 'Cargando preguntas...' : startingExam ? 'Iniciando cámara...' : 'Empezar Examen'}
+                    {startingExam ? 'Iniciando cámara...' : 'Empezar Examen'}
                   </button>
                 </div>
               ) : (
@@ -352,7 +405,19 @@ export default function ExamPage() {
                     </div>
                   )}
 
-                  {loadingQuestions ? (
+                  {attemptInfo?.used && (
+                    <p className="text-secondary text-sm mb-16">Intento {attemptInfo.used} de {attemptInfo.max}</p>
+                  )}
+
+                  {questionsError ? (
+                    <div id="exam-questions-error" className="camera-error-card" role="alert">
+                      <div className="camera-error-title text-sm">⚠️ {questionsError.message}</div>
+                      <div className="flex gap-8 mt-12">
+                        <button className="btn btn-secondary" onClick={() => reloadQuestions()}>Reintentar</button>
+                        <button className="btn btn-primary" onClick={() => router.push('/course')}>Volver al Curso</button>
+                      </div>
+                    </div>
+                  ) : loadingQuestions ? (
                     <div className="question-card">Cargando preguntas...</div>
                   ) : (
                     questions.map((q, idx) => {
@@ -430,7 +495,7 @@ export default function ExamPage() {
                       id="btn-submit"
                       className="btn btn-primary"
                       onClick={handleSubmit}
-                      disabled={Object.keys(answers).length < questions.length}
+                      disabled={questions.length === 0 || Object.keys(answers).length < questions.length}
                     >
                       Enviar Respuestas
                     </button>

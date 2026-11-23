@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
-import { courseModules } from '../../lib/courseConfig';
+import { courseModules, ALL_STEPS } from '../../lib/courseConfig';
 
 function getModuleProgress(completedModules, moduleId) {
   const mod = courseModules.find(m => m.id === moduleId);
@@ -561,7 +561,7 @@ export default function AdminPage() {
             Registro Oficial de Estudiantes {selectedCohort !== 'all' ? `— ${selectedCohort}` : ''}
           </h2>
           <span className="text-xs text-secondary">
-            Estándar Reglamentario IES: ≥90% en Evaluación Final, 25/25 pasos y Proctoring Validado
+            Estándar Reglamentario IES: ≥90% en Evaluación Final, {ALL_STEPS.length}/{ALL_STEPS.length} pasos y Proctoring Validado
           </span>
         </div>
         <table className="admin-table" role="table" aria-label="Lista de estudiantes para auditoría IES">

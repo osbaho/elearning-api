@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { performLogin } from '../helpers/loginHelper.js';
+import { playSimulatorPhase } from '../helpers/simulatorHelper.js';
 
 test.describe('Security & Business Logic Hardening', () => {
 
@@ -18,6 +19,9 @@ test.describe('Security & Business Logic Hardening', () => {
   test('Wildcard endpoint hardcodes cost in server and prevents client manipulation', async ({ page }) => {
     await performLogin(page, 'student@test.com', 'student123', true);
 
+    // El comodín solo vale dentro de un intento de examen abierto
+    const startRes = await page.request.post('http://localhost:5000/api/start-exam');
+    expect(startRes.status()).toBe(200);
     const qRes = await page.request.get('http://localhost:5000/api/questions');
     const questions = await qRes.json();
     const targetQuestionId = questions[0].id;
@@ -50,7 +54,13 @@ test.describe('Security & Business Logic Hardening', () => {
     const firstStepRes = await page.request.post('http://localhost:5000/api/progress/m1_v1');
     expect(firstStepRes.status()).toBe(200);
 
-    // Ahora m1_s1 (segundo paso) debe permitirse
+    // m1_s1 (segundo paso) es un minijuego del simulador: sin una partida terminada se rechaza
+    const unplayedRes = await page.request.post('http://localhost:5000/api/progress/m1_s1');
+    expect(unplayedRes.status()).toBe(403);
+    expect((await unplayedRes.json()).error).toContain('al menos una partida');
+
+    // Tras jugar una partida, el segundo paso sí debe permitirse
+    await playSimulatorPhase(page.request, 'm1_s1');
     const secondStepRes = await page.request.post('http://localhost:5000/api/progress/m1_s1');
     expect(secondStepRes.status()).toBe(200);
   });

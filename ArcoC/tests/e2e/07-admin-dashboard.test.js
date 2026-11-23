@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { performLogin } from '../helpers/loginHelper';
+import { performLogin, resetStudentState } from '../helpers/loginHelper';
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'test-admin-password';
 
@@ -35,6 +35,8 @@ test.describe('Admin Role & IES Audit Dashboard', () => {
   });
 
   test('Admin dashboard displays student audit records with identification and IES institution', async ({ page }) => {
+    // El estudiante de prueba con nombre conocido (no depende de cómo se creó la base de datos)
+    await resetStudentState(page.request, { email: 'student@test.com', name: 'Test Student' });
     await performLogin(page, 'admin@admin.com', ADMIN_PASSWORD, false);
     await expect(page).toHaveURL(/\/admin/);
 
