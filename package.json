@@ -1,0 +1,42 @@
+{
+  "name": "carm-master-mvp",
+  "version": "1.0.0",
+  "description": "Medical Training Platform C-Arm Master — Local MVP",
+  "main": "server.js",
+  "type": "module",
+  "workspaces": [
+    "client"
+  ],
+  "scripts": {
+    "start": "node server.js",
+    "start:client": "npm --workspace=client run start",
+    "dev:server": "node --watch-path=server --watch-path=server.js server.js",
+    "dev:client": "npm --workspace=client run dev",
+    "build": "npm --workspace=client run build",
+    "test": "playwright test",
+    "seed": "node server/scripts/seed.js",
+    "seed:student": "node server/scripts/seed_student.js",
+    "seed:questions": "node server/scripts/seed_50_questions.js",
+    "clear": "node server/scripts/clear_users.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cookie": "^2.0.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^18.0.2",
+    "express": "^4.18.2",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "pdfkit": "^0.20.2",
+    "pg": "^8.23.0",
+    "qrcode": "^1.5.4",
+    "socket.io": "^4.8.3",
+    "sql.js": "^1.12.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "playwright": "^1.63.0"
+  }
+}
