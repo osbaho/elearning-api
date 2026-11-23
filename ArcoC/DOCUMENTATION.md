@@ -31,7 +31,7 @@ El sistema opera bajo un modelo de desacoplamiento **Cliente-Servidor (BFF/API)*
 
 ```mermaid
 graph TB
-    subgraph CLIENT["🖥️ Frontend — Next.js 14+ (App Router) :3000"]
+    subgraph CLIENT["🖥️ Frontend — Next.js 16 (App Router) :3000"]
         AUTH_CTX["AuthContext (Cookie-driven)"]
         UI_PAGES["Páginas: /login · /onboarding · /course · /course/exam · /admin"]
         HOOK_PROCTORING["useProctoring() (face-api.js + socket.io-client)"]
@@ -604,6 +604,27 @@ Los videos definitivos y el build de Unity son artefactos pesados: **no se versi
   ```
   Usa la plantilla `Assets/WebGLTemplates/CArmEmbed` (canvas a pantalla completa y puente de mensajes con la plataforma). La compresión WebGL está desactivada, así que no se requieren cabeceras `Content-Encoding` especiales.
 * Si prefieres versionarlos, usa Git LFS: GitHub rechaza archivos de más de 100 MB.
+
+### 6. Dependencias npm y Alertas de Seguridad (Dependabot)
+Versiones clave: **Next.js 16.4.6** (con `eslint-config-next` 16.4.6) y **React 19.2.8**. En Next 16, la versión 16.4.1 corrige las alertas críticas y altas, y la 16.4.5 las moderadas. La serie 16.3 no recibió esos parches: su última versión, la 16.3.8, sigue afectada.
+
+GitHub (Dependabot) revisa **tres** lockfiles en `ArcoC/`, y cada uno se instala por separado:
+
+| Lockfile | Lo usa | Contenido |
+| :--- | :--- | :--- |
+| `package-lock.json` | `npm install` en `ArcoC/` (desarrollo y pruebas E2E) y `Dockerfile.backend` | Backend Express y el workspace `client` |
+| `client/package-lock.json` | `Dockerfile.frontend`, que instala `client/` por su cuenta | Solo el frontend Next.js |
+| `public/documents/package-lock.json` | `convert.js` (compilación de las lecturas a PDF) | `md-to-pdf` y `puppeteer` |
+
+* **Al cambiar una dependencia del cliente, actualiza los dos primeros.** Dentro de `client/`, npm trabaja sobre el workspace raíz (`npm prefix` devuelve `ArcoC/`), así que `client/package-lock.json` se regenera desde una copia aislada (comandos desde `ArcoC/`):
+  ```powershell
+  $tmp = New-Item -ItemType Directory -Force (Join-Path $env:TEMP "client-lock")
+  Copy-Item client\package.json, client\package-lock.json $tmp
+  Push-Location $tmp; npm install --package-lock-only --ignore-scripts; npm audit --package-lock-only; Pop-Location
+  Copy-Item (Join-Path $tmp "package-lock.json") client\package-lock.json
+  ```
+* **`node-fetch` forzado a `^2.7.0`** mediante `overrides`, declarado en `package.json` **y** en `client/package.json`, porque npm solo aplica los `overrides` del `package.json` raíz de cada instalación. `face-api.js` 0.22.2 (sin mantenimiento) depende de `@tensorflow/tfjs-core` 1.7.0, que fija `node-fetch ~2.1.2`, versión vulnerable. En el navegador tfjs no carga `node-fetch` y en Node usa el `fetch` nativo. No apliques `npm audit fix --force`, que propone bajar `face-api.js` a 0.20.0. Retira el override si se migra a un fork mantenido.
+* **Revisión periódica:** `npm audit` en `ArcoC/`, en la copia aislada de `client/` y en `public/documents/` (`npm audit --package-lock-only`). Prefiere `npm audit fix` y versiones menores o de parche. Antes de un salto mayor, lee sus notas; para Next, la guía de `node_modules/next/dist/docs/` (ver `client/AGENTS.md`).
 
 ---
 
