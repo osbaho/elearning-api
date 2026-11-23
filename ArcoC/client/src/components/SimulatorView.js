@@ -110,6 +110,7 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
   const [attemptState, setAttemptState] = useState('idle');
   const [lastResult, setLastResult] = useState(null);
   const [completedAttempts, setCompletedAttempts] = useState(0);
+  const [stepPoints, setStepPoints] = useState(0);
   const [sessionAttempts, setSessionAttempts] = useState(0);
   const [sessionPoints, setSessionPoints] = useState(0);
   const [status, setStatus] = useState('Esperando...');
@@ -156,6 +157,7 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
         if (ok) {
           setStepInfo(data);
           setCompletedAttempts(data.completedAttempts || 0);
+          setStepPoints(data.pointsEarned || 0);
         } else {
           setStepInfo({ available: false, error: httpStatus === 404 ? null : data?.error || `Error ${httpStatus}` });
         }
@@ -238,12 +240,16 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
         setSessionPoints((n) => n + data.pointsAwarded);
       }
       setUser((prev) => ({ ...prev, reservePoints: data.reservePoints }));
+      if (typeof data.stepPointsEarned === 'number') setStepPoints(data.stepPointsEarned);
       setStatus('Resultado registrado');
       const tier = TIER_INFO[data.tier] || TIER_INFO.failed;
-      addToast(
-        data.pointsAwarded > 0 ? `${tier.title}: +${data.pointsAwarded} Puntos de Reserva ⚡` : `${tier.title}: sin Puntos de Reserva esta vez.`,
-        data.pointsAwarded > 0 ? 'success' : 'info'
-      );
+      let toastText = data.pointsAwarded > 0
+        ? `${tier.title}: +${data.pointsAwarded} Puntos de Reserva ⚡`
+        : `${tier.title}: sin Puntos de Reserva esta vez.`;
+      if (data.stepCapReached) {
+        toastText += ` Alcanzaste el máximo de ${data.stepPointsMax} puntos de este minijuego.`;
+      }
+      addToast(toastText, data.pointsAwarded > 0 ? 'success' : 'info');
       postToSimulator({
         type: 'phase-ack',
         attemptId: current.attemptId,
@@ -457,6 +463,9 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
                     {lastResult.pointsAwarded > 0
                       ? <>Ganaste <strong className="text-amber">+{lastResult.pointsAwarded} Puntos de Reserva ⚡</strong>.</>
                       : 'Esta partida no sumó Puntos de Reserva.'}
+                    {lastResult.stepCapReached && (
+                      <> Ya alcanzaste el máximo de {lastResult.stepPointsMax} puntos de este minijuego: puedes seguir practicando, pero las partidas ya no suman.</>
+                    )}
                   </p>
                 </div>
               )}
@@ -579,10 +588,16 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
               <strong id="session-points" className="text-green">+{sessionPoints}</strong>
             </div>
             {hasSimulator && (
-              <div className="flex-between mt-8">
-                <span>Partidas terminadas (total):</span>
-                <strong>{completedAttempts}</strong>
-              </div>
+              <>
+                <div className="flex-between mt-8">
+                  <span>Partidas terminadas (total):</span>
+                  <strong>{completedAttempts}</strong>
+                </div>
+                <div className="flex-between mt-8">
+                  <span>Puntos en este minijuego:</span>
+                  <strong id="step-points">{stepPoints} / {stepInfo?.maxPoints ?? 50}</strong>
+                </div>
+              </>
             )}
             <div className="flex-between mt-8">
               <span>Estado:</span>
@@ -597,6 +612,7 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
               <li>Perfecta (≥70 % y sin errores): <strong className="text-amber">+10 ⚡</strong></li>
               <li>Aprobada con errores (≥70 %): <strong className="text-amber">+5 ⚡</strong></li>
               <li>No aprobada: 0 puntos</li>
+              <li>Máximo <strong className="text-amber">50 ⚡</strong> por minijuego</li>
               <li>Úsalos en el examen para <strong className="text-amber">50/50</strong>; no suman a tu nota final</li>
             </ul>
           </div>

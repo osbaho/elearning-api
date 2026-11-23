@@ -4,7 +4,9 @@ import { get, run, withTransaction, getPgPool } from '../config/db.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { isPracticeStep, previousStepOf } from '../config/curriculum.js';
 import { getSimulatorEntry } from '../config/simulatorCatalog.js';
-import { classifyPhaseResult, clampToReserveCap, POINTS_BY_TIER } from '../config/reservePoints.js';
+import {
+  classifyPhaseResult, clampToReserveCap, clampToStepCap, POINTS_BY_TIER, MAX_POINTS_PER_PRACTICE_STEP,
+} from '../config/reservePoints.js';
 
 /**
  * Integración con el simulador Unity WebGL (intentos y resultados por fase).
@@ -82,6 +84,7 @@ router.get('/steps/:stepId', authenticateToken, async (req, res) => {
         available: false,
         completedAttempts: 0,
         pointsEarned: 0,
+        maxPoints: MAX_POINTS_PER_PRACTICE_STEP,
         stepCompleted: await isStepCompleted(studentId, stepId),
       });
     }
@@ -99,6 +102,7 @@ router.get('/steps/:stepId', authenticateToken, async (req, res) => {
       title: entry.title,
       completedAttempts: parseInt(stats?.completed_attempts || 0, 10),
       pointsEarned: Number(stats?.points_earned || 0),
+      maxPoints: MAX_POINTS_PER_PRACTICE_STEP,
       stepCompleted: await isStepCompleted(studentId, stepId),
     });
   } catch (err) {
@@ -188,11 +192,26 @@ router.post('/attempts/:attemptId/result', authenticateToken, async (req, res) =
       if (result.timeSeconds > elapsedSeconds + TIME_TOLERANCE_SECONDS) {
         throw new HttpError(422, 'El tiempo reportado supera el tiempo transcurrido del intento.');
       }
+      // Producción: una partida real dura al menos minSeconds (carga de Unity incluida). Un resultado
+      // anterior solo puede venir de un envío automatizado. En desarrollo no se aplica.
+      const minSeconds = getSimulatorEntry(attempt.step_id)?.minSeconds || 0;
+      if (process.env.NODE_ENV === 'production' && elapsedSeconds < minSeconds) {
+        throw new HttpError(422, `Partida demasiado corta para ser válida (mínimo ${minSeconds} s).`);
+      }
 
       const tier = classifyPhaseResult(result);
       const student = await tx.get('SELECT reserve_points FROM students WHERE id = ?', [studentId]);
       if (!student) throw new HttpError(404, 'Estudiante no encontrado');
-      const pointsAwarded = clampToReserveCap(POINTS_BY_TIER[tier], student.reserve_points);
+      // Tope por minijuego (siempre) y techo global de 500
+      const earned = await tx.get(
+        `SELECT COALESCE(SUM(points_awarded), 0) AS earned FROM simulator_attempts
+          WHERE student_id = ? AND step_id = ? AND status = 'completed'`,
+        [studentId, attempt.step_id]
+      );
+      const earnedInStep = Number(earned?.earned || 0);
+      const tierPoints = POINTS_BY_TIER[tier];
+      const pointsAwarded = clampToReserveCap(clampToStepCap(tierPoints, earnedInStep), student.reserve_points);
+      const stepCapReached = tierPoints > 0 && earnedInStep + tierPoints > MAX_POINTS_PER_PRACTICE_STEP;
 
       if (pointsAwarded > 0) {
         await tx.run('UPDATE students SET reserve_points = reserve_points + ? WHERE id = ?', [pointsAwarded, studentId]);
@@ -225,6 +244,9 @@ router.post('/attempts/:attemptId/result', authenticateToken, async (req, res) =
         tier,
         pointsAwarded,
         reservePoints: updated.reserve_points,
+        stepPointsEarned: earnedInStep + pointsAwarded,
+        stepPointsMax: MAX_POINTS_PER_PRACTICE_STEP,
+        stepCapReached,
         duplicate: false,
       };
     });

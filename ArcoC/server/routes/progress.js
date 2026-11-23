@@ -1,10 +1,52 @@
 import express from 'express';
 import { run, get, getPgPool } from '../config/db.js';
 import { authenticateToken } from '../middleware/auth.js';
-import { isCourseStep, previousStepOf } from '../config/curriculum.js';
+import { isCourseStep, isVideoStep, minWatchSecondsFor, previousStepOf } from '../config/curriculum.js';
 import { getSimulatorEntry } from '../config/simulatorCatalog.js';
 
 const router = express.Router();
+
+async function isStepCompleted(studentId, stepId) {
+  const row = await get(
+    'SELECT id FROM course_progress WHERE student_id = ? AND module_id = ? AND status = ?',
+    [studentId, stepId, 'completed']
+  );
+  return Boolean(row);
+}
+
+/** Mensaje de bloqueo si el paso anterior no está completado, o null. */
+async function sequenceBlockMessage(studentId, stepId) {
+  const prevStep = previousStepOf(stepId);
+  if (prevStep && !(await isStepCompleted(studentId, prevStep))) {
+    return `Secuencia requerida: Debes completar el paso previo (${prevStep}) antes de avanzar a ${stepId}.`;
+  }
+  return null;
+}
+
+// POST /api/progress/:moduleId/start — el estudiante empezó a reproducir un video.
+// Registra solo el primer inicio: es el punto desde el que se mide el tiempo mínimo de visualización.
+router.post('/:moduleId/start', authenticateToken, async (req, res) => {
+  try {
+    const { moduleId } = req.params;
+    const studentId = req.user.id;
+    if (!isVideoStep(moduleId)) {
+      return res.status(400).json({ error: 'Solo los videos del curso registran inicio de reproducción.' });
+    }
+    const blocked = await sequenceBlockMessage(studentId, moduleId);
+    if (blocked) return res.status(403).json({ error: blocked });
+
+    const insert = getPgPool()
+      ? `INSERT INTO video_views (student_id, step_id, started_at) VALUES (?, ?, ?) ON CONFLICT (student_id, step_id) DO NOTHING`
+      : `INSERT OR IGNORE INTO video_views (student_id, step_id, started_at) VALUES (?, ?, ?)`;
+    await run(insert, [studentId, moduleId, new Date().toISOString()]);
+
+    const view = await get('SELECT started_at FROM video_views WHERE student_id = ? AND step_id = ?', [studentId, moduleId]);
+    res.json({ stepId: moduleId, startedAt: view?.started_at, minWatchSeconds: minWatchSecondsFor(moduleId) });
+  } catch (err) {
+    console.error('Video start error:', err);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
 
 // POST /api/progress/:moduleId
 router.post('/:moduleId', authenticateToken, async (req, res) => {
@@ -17,17 +59,31 @@ router.post('/:moduleId', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Módulo inválido o no permitido para marcado directo.' });
     }
 
+    // Repetir un paso ya completado no cambia nada
+    if (await isStepCompleted(studentId, moduleId)) {
+      return res.json({ success: true, alreadyCompleted: true });
+    }
+
     // Validación de secuencia: el paso anterior debe estar completado
-    const prevStep = previousStepOf(moduleId);
-    if (prevStep) {
-      const prevDone = await get(
-        'SELECT id FROM course_progress WHERE student_id = ? AND module_id = ? AND status = ?',
-        [studentId, prevStep, 'completed']
-      );
-      if (!prevDone) {
-        return res.status(403).json({
-          error: `Secuencia requerida: Debes completar el paso previo (${prevStep}) antes de avanzar a ${moduleId}.`
-        });
+    const blocked = await sequenceBlockMessage(studentId, moduleId);
+    if (blocked) return res.status(403).json({ error: blocked });
+
+    // Videos (solo producción): el reproductor impide adelantar, pero eso ocurre en el navegador.
+    // El servidor exige además que desde el inicio de la reproducción haya pasado el tiempo mínimo.
+    // En desarrollo y tests no se aplica para poder avanzar la malla sin esperar.
+    if (process.env.NODE_ENV === 'production' && isVideoStep(moduleId)) {
+      const minSeconds = minWatchSecondsFor(moduleId);
+      if (minSeconds > 0) {
+        const view = await get('SELECT started_at FROM video_views WHERE student_id = ? AND step_id = ?', [studentId, moduleId]);
+        if (!view) {
+          return res.status(403).json({ error: 'Reproduce el video en la plataforma para registrarlo como visto.' });
+        }
+        const elapsed = (Date.now() - Date.parse(view.started_at)) / 1000;
+        if (elapsed < minSeconds) {
+          return res.status(403).json({
+            error: `Aún no has visto el video completo (faltan unos ${Math.ceil(minSeconds - elapsed)} s).`
+          });
+        }
       }
     }
 
@@ -48,9 +104,9 @@ router.post('/:moduleId', authenticateToken, async (req, res) => {
 
     if (pgPool) {
       await run(`
-        INSERT INTO course_progress (student_id, module_id, status) 
-        VALUES (?, ?, 'completed') 
-        ON CONFLICT (student_id, module_id) 
+        INSERT INTO course_progress (student_id, module_id, status)
+        VALUES (?, ?, 'completed')
+        ON CONFLICT (student_id, module_id)
         DO NOTHING
       `, [studentId, moduleId]);
     } else {

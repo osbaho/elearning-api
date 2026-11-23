@@ -5,8 +5,6 @@ import http from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import helmet from 'helmet';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import cookieParser from 'cookie-parser';
 import * as cookie from 'cookie';
 
@@ -22,8 +20,6 @@ import progressRoutes from './server/routes/progress.js';
 import simulatorRoutes from './server/routes/simulator.js';
 import { COURSE_STEPS } from './server/config/curriculum.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET;
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000')
@@ -109,7 +105,9 @@ app.use(
 );
 
 app.use(express.json({ limit: '10kb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+// Sin express.static: el backend es solo API. ArcoC/public contiene las fuentes Markdown de las
+// lecturas y herramientas de compilación, que no deben publicarse; el contenido del curso lo
+// sirve Next.js (client/public) detrás de la sesión (client/src/proxy.js).
 app.use('/api', globalLimiter);
 
 // ─── API Routes ────────────────────────────────────────────────────────────
@@ -167,6 +165,7 @@ if (process.env.NODE_ENV !== 'production') {
         await run('DELETE FROM course_progress WHERE student_id = ?', [student.id]);
         await run('DELETE FROM exam_logs WHERE student_id = ?', [student.id]);
         await run('DELETE FROM simulator_attempts WHERE student_id = ?', [student.id]);
+        await run('DELETE FROM video_views WHERE student_id = ?', [student.id]);
 
         // Opcional para pruebas: marcar curso completo
         if (req.body?.complete_course) {

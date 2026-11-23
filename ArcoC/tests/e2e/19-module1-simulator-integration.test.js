@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { performLogin, resetStudentState } from '../helpers/loginHelper.js';
 import { playSimulatorPhase, PERFECT_RESULT } from '../helpers/simulatorHelper.js';
-import { COURSE_STEPS, TOTAL_COURSE_STEPS } from '../../server/config/curriculum.js';
+import { COURSE_STEPS, TOTAL_COURSE_STEPS, VIDEO_DURATION_SECONDS, isVideoStep } from '../../server/config/curriculum.js';
 
 const API = 'http://localhost:5000/api';
 const MODULE1_VIDEOS = ['M01_V01_SER.mp4', 'M01_V02_Fisica.mp4', 'M01_V03_Geometria.mp4'];
@@ -42,15 +42,23 @@ test.describe('Módulo 1: malla, videos y simulador', () => {
     for (const video of MODULE1_VIDEOS) {
       expect(configSource).toContain(`/videos/modulo1/${video}`);
     }
+    // Cada video de la malla tiene su duración registrada (define el tiempo mínimo de visualización)
+    const videoSteps = COURSE_STEPS.filter(isVideoStep);
+    expect(videoSteps.length).toBe(15);
+    for (const step of videoSteps) {
+      expect(VIDEO_DURATION_SECONDS[step], step).toBeGreaterThan(0);
+    }
   });
 
-  test('Los videos definitivos del módulo 1 se sirven con soporte de rangos (seek)', async ({ request }) => {
+  test('Los videos definitivos del módulo 1 se sirven con soporte de rangos (seek)', async ({ page }) => {
     const videosDir = path.resolve('client/public/videos/modulo1');
     test.skip(!MODULE1_VIDEOS.every(v => fs.existsSync(path.join(videosDir, v))),
       'Videos no generados: ejecuta scripts/prepare-module-videos.ps1 -Module 1');
 
+    // El contenido del curso exige sesión
+    await performLogin(page, 'student@test.com', 'student123', true);
     for (const video of MODULE1_VIDEOS) {
-      const res = await request.get(`/videos/modulo1/${video}`, { headers: { Range: 'bytes=0-1023' } });
+      const res = await page.request.get(`/videos/modulo1/${video}`, { headers: { Range: 'bytes=0-1023' } });
       expect(res.status(), video).toBe(206);
       expect(res.headers()['content-type']).toContain('video/mp4');
       // faststart: el índice (moov) va justo después de ftyp, al inicio del archivo
@@ -131,6 +139,23 @@ test.describe('Módulo 1: malla, videos y simulador', () => {
     // La partida sigue intacta para su dueño
     const own = await page.request.post(`${API}/simulator/attempts/${attempt.attemptId}/result`, { data: { ...PERFECT_RESULT, phase: 1 } });
     expect(own.status()).toBe(200);
+  });
+
+  test('Un minijuego aporta como máximo 50 Puntos de Reserva', async ({ page }) => {
+    await performLogin(page, 'student@test.com', 'student123', true);
+    await resetStudentState(page.request, { reserve_points: 0 });
+    await page.request.post(`${API}/progress/m1_v1`);
+
+    for (let i = 1; i <= 5; i++) {
+      const { result } = await playSimulatorPhase(page.request, 'm1_s1');
+      expect(result).toMatchObject({ pointsAwarded: 10, stepPointsEarned: 10 * i, stepPointsMax: 50, stepCapReached: false });
+    }
+    // La sexta partida perfecta se registra, pero ya no suma
+    const { result: sixth } = await playSimulatorPhase(page.request, 'm1_s1');
+    expect(sixth).toMatchObject({ tier: 'perfect', pointsAwarded: 0, reservePoints: 50, stepPointsEarned: 50, stepCapReached: true });
+
+    const info = await (await page.request.get(`${API}/simulator/steps/m1_s1`)).json();
+    expect(info).toMatchObject({ completedAttempts: 6, pointsEarned: 50, maxPoints: 50 });
   });
 
   test('El techo de 500 Puntos de Reserva se respeta en el simulador', async ({ page }) => {

@@ -1,12 +1,13 @@
 'use client';
 import { useRef, useEffect, useState } from 'react';
 
-export default function VideoPlayer({ src, moduleKey, isCompleted, onComplete, captionsSrc }) {
+export default function VideoPlayer({ src, moduleKey, isCompleted, onComplete, onStart, captionsSrc }) {
   const videoRef = useRef(null);
   const [progress, setProgress] = useState(0);
   const [showSeekWarning, setShowSeekWarning] = useState(false);
   const maxTimeWatched = useRef(0);
   const hasCompleted = useRef(false);
+  const hasStarted = useRef(false);
   const warningTimer = useRef(null);
 
   useEffect(() => {
@@ -58,17 +59,27 @@ export default function VideoPlayer({ src, moduleKey, isCompleted, onComplete, c
       }
     };
 
+    // Primer play: la API registra el inicio (en producción mide el tiempo mínimo de visualización)
+    const handlePlay = () => {
+      if (!isCompleted && !hasCompleted.current && !hasStarted.current && onStart) {
+        hasStarted.current = true;
+        onStart();
+      }
+    };
+
     video.addEventListener('timeupdate', handleTimeUpdate);
     video.addEventListener('seeking', handleSeeking);
     video.addEventListener('ended', handleEnded);
+    video.addEventListener('play', handlePlay);
 
     return () => {
       video.removeEventListener('timeupdate', handleTimeUpdate);
       video.removeEventListener('seeking', handleSeeking);
       video.removeEventListener('ended', handleEnded);
+      video.removeEventListener('play', handlePlay);
       if (warningTimer.current) clearTimeout(warningTimer.current);
     };
-  }, [moduleKey, isCompleted, onComplete]);
+  }, [moduleKey, isCompleted, onComplete, onStart]);
 
   return (
     <div className="video-wrap">

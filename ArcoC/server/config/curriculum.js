@@ -43,6 +43,37 @@ export function previousStepOf(stepId) {
 }
 
 /**
+ * Duración (segundos) de cada video de la malla.
+ * En producción, un video solo se registra como visto si desde que el estudiante empezó a
+ * reproducirlo (POST /api/progress/:id/start) pasó el tiempo de verlo al 90 % a 2x, la velocidad
+ * máxima del reproductor, con 5 s de margen. Al publicar los videos de un módulo, registra aquí
+ * sus duraciones: scripts/prepare-module-videos.ps1 las imprime.
+ */
+export const VIDEO_DURATION_SECONDS = Object.freeze({
+  m1_v1: 175, m1_v2: 211, m1_v3: 182,
+  // Módulos 2–5: video placeholder de 10 s hasta tener su contenido definitivo
+  m2_v1: 10, m2_v2: 10, m2_vr: 10,
+  m3_v1: 10, m3_v2: 10, m3_vr: 10,
+  m4_v1: 10, m4_v2: 10, m4_vr: 10,
+  m5_v1: 10, m5_v2: 10, m5_vr: 10,
+});
+
+const VIDEO_STEP_PATTERN = /^m\d+_v(\d+|r)$/;
+const WATCH_FRACTION = 0.9;          // el reproductor marca "visto" al 90 %
+const MAX_PLAYBACK_RATE = 2;         // velocidad máxima que ofrece el reproductor
+const WATCH_TOLERANCE_SECONDS = 5;
+
+export function isVideoStep(stepId) {
+  return isCourseStep(stepId) && VIDEO_STEP_PATTERN.test(stepId);
+}
+
+/** Segundos mínimos entre el inicio de la reproducción y el registro del video como visto. */
+export function minWatchSecondsFor(stepId) {
+  const duration = VIDEO_DURATION_SECONDS[stepId] || 0;
+  return Math.max(0, Math.floor((duration * WATCH_FRACTION) / MAX_PLAYBACK_RATE - WATCH_TOLERANCE_SECONDS));
+}
+
+/**
  * Cuenta solo los pasos que pertenecen a la malla vigente, para que registros
  * antiguos (p. ej. 'm1_vr', eliminado del módulo 1) no inflen el avance.
  */

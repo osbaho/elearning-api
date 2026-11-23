@@ -281,6 +281,18 @@ export async function initDb() {
     );
   `);
 
+  // Primer inicio de reproducción de cada video: en producción, un video solo se registra como
+  // visto si desde aquí pasó el tiempo mínimo (curriculum.minWatchSecondsFor)
+  await run(`
+    CREATE TABLE IF NOT EXISTS video_views (
+      id ${idType},
+      student_id INTEGER NOT NULL,
+      step_id TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      UNIQUE(student_id, step_id)
+    );
+  `);
+
   await alterTable(`ALTER TABLE course_progress ADD COLUMN certificate_code TEXT`);
 
   // Índices para optimización de rendimiento

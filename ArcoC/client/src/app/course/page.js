@@ -26,6 +26,15 @@ export default function Course() {
   // Exam is locked if not all module steps are completed
   const examLocked = completedSteps < TOTAL_STEPS;
 
+  // Registra el inicio de la reproducción: en producción, la API mide desde aquí el tiempo mínimo
+  // de visualización antes de aceptar el video como visto.
+  const handleStartVideo = (moduleId) => {
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/progress/${moduleId}/start`, {
+      method: 'POST',
+      credentials: 'include'
+    }).catch((err) => console.error('Error registering video start:', err));
+  };
+
   const handleMarkVideo = async (moduleId) => {
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/progress/${moduleId}`, {
@@ -277,6 +286,7 @@ export default function Course() {
                         videoSrc={item.videoSrc}
                         moduleKey={item.key}
                         onComplete={() => handleMarkVideo(item.key)}
+                        onStart={() => handleStartVideo(item.key)}
                         linkHref={item.linkHref}
                         linkText={item.linkText}
                         completedText={item.completedText}

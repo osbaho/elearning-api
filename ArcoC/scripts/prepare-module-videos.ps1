@@ -12,8 +12,10 @@
   Los masters nunca se modifican. Los archivos ya generados se omiten si son más
   nuevos que su master (usa -Force para regenerarlos).
 
-  Después de generarlos, registra cada video en client/src/lib/courseConfig.js
-  (videoSrc: '/videos/modulo<N>/<archivo>.mp4').
+  Después de generarlos:
+    - registra cada video en client/src/lib/courseConfig.js (videoSrc: '/videos/modulo<N>/<archivo>.mp4');
+    - copia las duraciones que imprime el script en VIDEO_DURATION_SECONDS de
+      server/config/curriculum.js (en producción definen el tiempo mínimo de visualización).
 
 .EXAMPLE
   .\scripts\prepare-module-videos.ps1 -Module 1 -SourceDir "C:\Oscar\Src_arcoenc\Video\Master"
@@ -105,3 +107,22 @@ foreach ($master in $masters) {
 }
 
 Write-Host "Videos del módulo $Module en: $OutputDir"
+
+# Duraciones para VIDEO_DURATION_SECONDS (server/config/curriculum.js)
+$ffprobe = Join-Path (Split-Path $ffmpeg -Parent) 'ffprobe.exe'
+if (Test-Path $ffprobe) {
+    $entries = @()
+    foreach ($master in $masters) {
+        $outPath = Join-Path $OutputDir ($master.Name -replace '_Master_', '_')
+        if (-not (Test-Path $outPath)) { continue }
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        $seconds = & $ffprobe -v error -show_entries format=duration -of csv=p=0 $outPath 2>$null
+        $ErrorActionPreference = $previousPreference
+        if ($master.Name -match '_V(\d+)_') {
+            $entries += "m$($Module)_v$([int]$Matches[1]): $([math]::Floor([double]$seconds))"
+        }
+    }
+    Write-Host "Duraciones para VIDEO_DURATION_SECONDS en server/config/curriculum.js:"
+    Write-Host ("  " + ($entries -join ', ') + ',')
+}

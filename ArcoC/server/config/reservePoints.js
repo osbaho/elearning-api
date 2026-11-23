@@ -14,6 +14,14 @@
 export const MAX_RESERVE_POINTS = 500;
 export const PASS_SCORE_PERCENT = 70;
 
+/**
+ * Tope de puntos que puede aportar un mismo minijuego (5 partidas perfectas).
+ * Repetir un minijuego sigue sumando hasta este tope; acota lo que se puede obtener
+ * enviando resultados falsos a la API. Con los 5 módulos completos, la suma de topes
+ * supera el techo global de 500.
+ */
+export const MAX_POINTS_PER_PRACTICE_STEP = 50;
+
 export const RESULT_TIERS = Object.freeze({
   PERFECT: 'perfect',
   INTERMEDIATE: 'intermediate',
@@ -35,5 +43,11 @@ export function classifyPhaseResult({ score, maxScore, passed, errorCount }) {
 /** Puntos que realmente se suman sin superar el techo. */
 export function clampToReserveCap(points, currentBalance) {
   const room = Math.max(0, MAX_RESERVE_POINTS - (currentBalance || 0));
+  return Math.max(0, Math.min(points, room));
+}
+
+/** Puntos que aún puede aportar un minijuego del que ya se ganaron `earnedInStep`. */
+export function clampToStepCap(points, earnedInStep) {
+  const room = Math.max(0, MAX_POINTS_PER_PRACTICE_STEP - (earnedInStep || 0));
   return Math.max(0, Math.min(points, room));
 }
