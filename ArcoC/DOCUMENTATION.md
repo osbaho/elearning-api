@@ -153,6 +153,7 @@ ArcoC/
 │       ├── proxy.js               # Sesión obligatoria para páginas del curso y contenido (videos, WebGL, PDF, imágenes)
 │       ├── app/
 │       │   ├── page.js            # Landing page institucional
+│       │   ├── globals.css        # Tema (variables CSS), componentes y clases utilitarias (ver sección 2.1)
 │       │   ├── login/page.js      # Inicio de sesión con autenticación HttpOnly
 │       │   ├── activar/           # Crear la contraseña con el enlace de bienvenida (/activar?token=)
 │       │   ├── recuperar/         # «¿Olvidaste tu contraseña?»
@@ -189,6 +190,14 @@ ArcoC/
 ```
 
 En la raíz del monorepo, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) corre el lint del cliente y la suite E2E sobre SQLite y PostgreSQL (ver sección 13).
+
+### 2.1 Estilos del frontend
+No hay Tailwind ni CSS por componente: todo el estilo vive en [`client/src/app/globals.css`](client/src/app/globals.css).
+* **Tema:** variables en `:root` para colores (`--accent-cyan`, `--accent-red`…), fondos, bordes, radios y sombras.
+* **Componentes:** clases propias como `.card`, `.btn`, `.admin-table`, `.modal-backdrop` y `.form-input`.
+* **Utilidades:** clases cortas con la escala del proyecto en px, por ejemplo `.mt-8`, `.p-16`, `.gap-8`, `.flex-wrap`, `.grid-cols-5`, `.font-bold`, `.title-sm`, `.text-red`, `.input` y `.loader`. Van al final del archivo para ganar sobre los estilos de componente con la misma especificidad (p. ej. `.card` + `.p-16`).
+* **Ninguna clase usada en el marcado debe faltar en el CSS.** Hasta noviembre de 2026 faltaban 109 (`flex-wrap`, `grid-cols-5`, `gap-*`, `mt-4`, `font-bold`, `input`…). Por eso el encabezado del panel se aplastaba, las tarjetas de indicadores se apilaban y los campos del admin salían sin estilo. Las que quedan sin definir son ganchos sin estilo propio (`tour-exam`, `tour-progress` para el recorrido guiado) o del estudiante que se revisarán en la Fase 6.
+* **Contenedor ancho:** `.container-wide` (1440 px) para las páginas del admin, que tienen tablas anchas. `.container` no fija `z-index`: así no crea un contexto de apilamiento, y los modales (`z-index` 1050) quedan sobre el encabezado fijo (100).
 
 ---
 
