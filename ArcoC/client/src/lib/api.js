@@ -53,6 +53,20 @@ export function formatDateTime(value) {
 }
 
 /** 'AAAA-MM-DD' → 'DD/MM/AAAA'. */
+/** «hace 5 min», «hace 3 h», «hace 2 días»: para columnas angostas (la fecha exacta va en un title). */
+export function formatRelative(value, now = Date.now()) {
+  if (!value) return '—';
+  const ms = now - new Date(value).getTime();
+  if (Number.isNaN(ms)) return String(value);
+  const minutes = Math.floor(ms / 60000);
+  if (minutes < 1) return 'hace un momento';
+  if (minutes < 60) return `hace ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `hace ${hours} h`;
+  const days = Math.floor(hours / 24);
+  return days === 1 ? 'hace 1 día' : `hace ${days} días`;
+}
+
 export function formatDay(isoDate) {
   if (!isoDate) return '—';
   const [y, m, d] = String(isoDate).slice(0, 10).split('-');

@@ -2493,3 +2493,121 @@ main {
 .auth-help-links a {
   color: var(--accent-cyan);
 }
+
+/* ── Seguimiento del avance y ficha del estudiante (Fase 2) ───────────────── */
+.view-tabs {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.view-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-secondary);
+  padding: 8px 14px;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.view-tab:hover {
+  color: var(--text-primary);
+}
+
+.view-tab.active {
+  color: var(--accent-cyan);
+  border-bottom-color: var(--accent-cyan);
+  font-weight: 600;
+}
+
+.progress-table th,
+.progress-table td {
+  padding: 6px 8px;
+  vertical-align: top;
+}
+
+.progress-bar-wrap.progress-mini {
+  height: 5px;
+  margin: 4px 0;
+}
+
+.mg-cell {
+  text-align: center;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.mg-legend,
+.mg-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.mg-badge.tier-perfect,
+.mg-legend.tier-perfect {
+  background: rgba(0, 230, 118, 0.14);
+  color: var(--accent-green);
+}
+
+.mg-badge.tier-intermediate,
+.mg-legend.tier-intermediate {
+  background: rgba(255, 179, 0, 0.14);
+  color: var(--accent-amber);
+}
+
+.mg-badge.tier-failed,
+.mg-legend.tier-failed {
+  background: rgba(255, 23, 68, 0.14);
+  color: var(--accent-red);
+}
+
+.mg-cell.tier-none,
+.mg-legend.tier-none {
+  color: var(--text-muted);
+}
+
+.alert-chip {
+  display: inline-block;
+  white-space: nowrap;
+  margin: 2px 4px 2px 0;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  background: rgba(255, 179, 0, 0.12);
+  color: var(--accent-amber);
+  border: 1px solid rgba(255, 179, 0, 0.4);
+}
+
+.detail-section {
+  margin-bottom: 24px;
+}
+
+.detail-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+}
+
+.timeline-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.timeline-list li {
+  display: flex;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8125rem;
+}
+
+.timeline-list time {
+  color: var(--text-muted);
+  min-width: 150px;
+  white-space: nowrap;
+}

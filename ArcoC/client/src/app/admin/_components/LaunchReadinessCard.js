@@ -2,11 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../../../lib/api';
-import { courseModules } from '../../../lib/courseConfig';
-
-const STEP_TITLES = Object.fromEntries(
-  courseModules.flatMap((mod) => mod.items.map((item) => [item.key, `Módulo ${mod.id} · ${item.title}`]))
-);
+import { stepLabel } from './adminLabels';
 
 /** Agrupa pasos pendientes por módulo: { 2: ['m2_v1', ...], ... } */
 function byModule(steps) {
@@ -83,7 +79,7 @@ export default function LaunchReadinessCard() {
               <div className="font-bold">Módulo {moduleNumber}</div>
               <ul className="mt-4 mb-0">
                 {steps.map((step) => (
-                  <li key={step}><code>{step}</code> — {STEP_TITLES[step] || step}</li>
+                  <li key={step}><code>{step}</code> — {stepLabel(step)}</li>
                 ))}
               </ul>
             </div>

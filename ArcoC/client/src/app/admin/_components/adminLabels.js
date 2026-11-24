@@ -1,4 +1,25 @@
 // Textos del panel admin compartidos por varios componentes
+import { STEP_INFO } from '../../../lib/courseConfig';
+
+/** «Mód. 2 · Video 1: …» a partir de la clave del paso. */
+export function stepLabel(stepId) {
+  const info = STEP_INFO[stepId];
+  return info ? `Mód. ${info.moduleId} · ${info.title}` : stepId;
+}
+
+/** Paso actual del seguimiento: un paso de la malla, el examen o null (ya certificado). */
+export function currentStepLabel(stepId) {
+  if (stepId === null) return '🎓 Certificado';
+  if (stepId === 'exam') return '📝 Examen final';
+  return stepLabel(stepId);
+}
+
+/** Texto de una alerta del seguimiento (las del minijuego llevan su título). */
+export function alertText(alert) {
+  return alert.code === 'minigame_struggling' && alert.stepId
+    ? `${alert.label} en ${stepLabel(alert.stepId)}`
+    : alert.label;
+}
 
 export const ACTION_LABELS = {
   'cohort.create': 'Creó la promoción',
@@ -27,6 +48,41 @@ export const ACCESS_STATE = {
   open: { label: 'Abierta', className: 'account-badge active' },
   not_started: { label: 'Por iniciar', className: 'account-badge pending' },
   closed: { label: 'Cerrada', className: 'account-badge inactive' },
+};
+
+/** Nivel del mejor resultado de un minijuego (regla 10/5/0 de reservePoints.js). */
+export const TIER_INFO = {
+  perfect: { points: 10, label: 'Perfecta', className: 'tier-perfect' },
+  intermediate: { points: 5, label: 'Intermedia', className: 'tier-intermediate' },
+  failed: { points: 0, label: 'No aprobada', className: 'tier-failed' },
+};
+
+/** Alertas del seguimiento (services/progressTracking.js): ícono y nombre corto. */
+export const ALERT_INFO = {
+  not_activated: { icon: '🔑', name: 'Sin activar' },
+  inactive: { icon: '💤', name: 'Inactivo' },
+  behind_schedule: { icon: '🐢', name: 'Atrasado' },
+  cohort_closing: { icon: '⏰', name: 'Cierre cercano' },
+  minigame_struggling: { icon: '🎮', name: 'Minijuego difícil' },
+  exam_exhausted: { icon: '📝', name: 'Sin intentos de examen' },
+};
+
+/** Estados de un intento del examen (tabla exam_attempts). */
+export const EXAM_ATTEMPT_STATUS = {
+  in_progress: { label: 'En curso', className: 'email-status queued' },
+  submitted: { label: 'Entregado', className: 'email-status sent' },
+  suspended: { label: 'Suspendido (proctoring)', className: 'email-status failed' },
+  abandoned: { label: 'Reiniciado', className: 'email-status simulated' },
+};
+
+/** Incidencias de supervisión registradas en exam_logs. */
+export const INCIDENT_LABELS = {
+  FOCUS_LOSS: 'Salió de la ventana del examen',
+  PROCTORING_GRACE: 'Período de gracia del proctoring',
+  PROCTORING_WARNING: 'Advertencia de señal de cámara',
+  PROCTORING_EXPIRED: 'Se agotó la gracia del proctoring',
+  PROCTORING_SUSPENDED: 'Examen suspendido por el proctoring',
+  AI_TRAP: 'Activó una trampa anti-IA',
 };
 
 /** Estado de la cuenta de un estudiante del listado: activa, pendiente de activación o desactivada. */
