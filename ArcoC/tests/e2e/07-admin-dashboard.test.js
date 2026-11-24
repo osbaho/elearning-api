@@ -51,7 +51,9 @@ test.describe('Admin Role & IES Audit Dashboard', () => {
     await expect(table.locator('thead')).toContainText('Supervisión IA');
     await expect(table.locator('thead')).toContainText('Estado IES');
 
-    // Validar que se liste el estudiante de prueba
+    // Validar que se liste el estudiante de prueba. El listado trae los 100 más recientes: se
+    // busca por correo para no depender de cuántos estudiantes acumule la base de desarrollo.
+    await page.fill('#input-admin-search', 'student@test.com');
     const studentRow = page.locator('tr[data-student-email="student@test.com"]');
     await expect(studentRow).toBeVisible();
     await expect(studentRow).toContainText('Test Student');

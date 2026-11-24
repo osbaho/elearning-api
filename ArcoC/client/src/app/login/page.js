@@ -76,7 +76,9 @@ export default function Login() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} noValidate>
+          {/* method="post": si se envía antes de que cargue el JavaScript, la contraseña no
+              termina en la URL (con el GET por defecto quedaba en el historial y los registros) */}
+          <form method="post" onSubmit={handleSubmit} noValidate>
             <div className="form-group">
               <label className="form-label" htmlFor="email">Correo Electrónico</label>
               <input

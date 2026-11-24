@@ -58,7 +58,8 @@ test.describe('Public Verification & Admin Security Chaos Testing', () => {
     });
     const { token: adminToken } = await loginAdminRes.json();
 
-    const studentsRes = await request.get('http://localhost:5000/api/admin/students', {
+    // Búsqueda por correo: el listado trae solo los 100 más recientes
+    const studentsRes = await request.get('http://localhost:5000/api/admin/students?search=student@test.com', {
       headers: { Authorization: `Bearer ${adminToken}` }
     });
     const studentsJson = await studentsRes.json();
