@@ -36,7 +36,7 @@ export default function ForgotPasswordForm() {
           <Link href="/login" className="btn btn-primary w-full">Volver a iniciar sesión</Link>
         </div>
       ) : (
-        <form onSubmit={onSubmit} noValidate>
+        <form method="post" onSubmit={onSubmit} noValidate>
           <p className="text-secondary text-sm mb-16">
             Escribe el correo con el que te inscribieron. Te enviaremos un enlace para crear tu contraseña
             (también sirve si nunca activaste tu cuenta).

@@ -104,7 +104,7 @@ export default function SetPasswordForm({ token, purpose }) {
       )}
 
       {tokenState.status === 'valid' && !done && (
-        <form id="set-password-form" onSubmit={onSubmit} noValidate>
+        <form id="set-password-form" method="post" onSubmit={onSubmit} noValidate>
           <p className="text-secondary mb-16 text-sm">
             {copy.intro(tokenState.info.firstName)} Cuenta: <strong>{tokenState.info.email}</strong>
           </p>

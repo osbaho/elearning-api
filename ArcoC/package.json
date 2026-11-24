@@ -40,10 +40,5 @@
     "mailparser": "3.14.3",
     "playwright": "^1.63.0",
     "smtp-server": "3.21.4"
-  },
-  "overrides": {
-    "@tensorflow/tfjs-core": {
-      "node-fetch": "^2.7.0"
-    }
   }
 }
