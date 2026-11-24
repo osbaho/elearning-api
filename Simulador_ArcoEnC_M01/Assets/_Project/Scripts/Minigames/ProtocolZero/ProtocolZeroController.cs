@@ -266,7 +266,7 @@ namespace CArmSimulator.Minigames.ProtocolZero
             else
             {
                 phase1Errors++;
-                RecordError(5);
+                RecordError(5, "PZ_LABEL_WRONG", $"Identificó mal un componente del arco ({nodeType}).");
             }
         }
 
@@ -310,7 +310,8 @@ namespace CArmSimulator.Minigames.ProtocolZero
                 }
 
                 failedAttemptsCount++;
-                RecordError(Mathf.Abs(PENALTY_FIRE_INVERTED));
+                RecordError(Mathf.Abs(PENALTY_FIRE_INVERTED), "PZ_FIRE_INVERTED",
+                    "Disparó con el arco invertido (tubo arriba): la dispersión va hacia el operador.");
 
                 ShowScatterHeatmap();
                 AudioSFXManager.Instance?.PlayWarningScatter();
@@ -333,7 +334,8 @@ namespace CArmSimulator.Minigames.ProtocolZero
                     }
 
                     failedAttemptsCount++;
-                    RecordError(5);
+                    RecordError(5, "PZ_PPE_MISSING",
+                        $"Disparó sin el equipo de protección completo ({activatedPpe.Count}/{totalRequired}).");
                     ShowPatientScatterHeatmap(); // Dispersión Compton emanando del PACIENTE hacia los lados
                     AudioSFXManager.Instance?.PlayWarningScatter();
                     OnExposureBlockedByPpe?.Invoke(INCOMPLETE_PPE_FEEDBACK);

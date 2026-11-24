@@ -6,6 +6,7 @@ import { requireOpenAccess } from '../services/access.js';
 import { isPracticeStep, previousStepOf } from '../config/curriculum.js';
 import { getSimulatorEntry, attemptBlockReason } from '../config/simulatorCatalog.js';
 import { isPreviewUser } from '../services/preview.js';
+import { parseErrorDetail } from '../services/simulatorErrors.js';
 import {
   classifyPhaseResult, clampToReserveCap, clampToStepCap, POINTS_BY_TIER, MAX_POINTS_PER_PRACTICE_STEP,
 } from '../config/reservePoints.js';
@@ -56,6 +57,9 @@ function parseResultBody(body) {
   if (!isNum(b.timeSeconds, 0, 86400)) return { error: 'timeSeconds debe ser un número entre 0 y 86400.' };
   const doseMsv = b.doseMsv === undefined || b.doseMsv === null ? null : b.doseMsv;
   if (doseMsv !== null && !isNum(doseMsv, 0, 1e6)) return { error: 'doseMsv debe ser un número mayor o igual a 0.' };
+  // Detalle opcional de cada error (qué y cuándo), Fase 4
+  const errors = parseErrorDetail(b.errors);
+  if (errors.error) return { error: errors.error };
 
   return {
     value: {
@@ -66,6 +70,7 @@ function parseResultBody(body) {
       errorCount: b.errorCount,
       timeSeconds: b.timeSeconds,
       doseMsv,
+      errors: errors.value,
     },
   };
 }
@@ -229,11 +234,12 @@ router.post('/attempts/:attemptId/result', authenticateToken, requireOpenAccess,
       await tx.run(
         `UPDATE simulator_attempts
             SET status = 'completed', completed_at = ?, score = ?, max_score = ?, passed = ?,
-                error_count = ?, dose_msv = ?, time_seconds = ?, tier = ?, points_awarded = ?
+                error_count = ?, dose_msv = ?, time_seconds = ?, tier = ?, points_awarded = ?, error_detail = ?
           WHERE id = ?`,
         [
           new Date().toISOString(), result.score, result.maxScore, result.passed ? 1 : 0,
-          result.errorCount, result.doseMsv, result.timeSeconds, tier, pointsAwarded, attemptId,
+          result.errorCount, result.doseMsv, result.timeSeconds, tier, pointsAwarded,
+          result.errors ? JSON.stringify(result.errors) : null, attemptId,
         ]
       );
       if (!preview) {

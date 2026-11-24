@@ -67,19 +67,36 @@ function MinigameAttempts({ step }) {
       </thead>
       <tbody>
         {step.attempts.map((a) => (
-          <tr key={a.id} data-tier={a.tier || 'none'} data-voided={a.voided ? 'true' : undefined}
-            style={a.voided ? { opacity: 0.55 } : undefined}>
-            <td>{when(a.startedAt)}</td>
-            <td title={a.voided ? `Anulada el ${when(a.voidedAt)}: ${a.voidReason || ''}` : undefined}>
-              {a.voided ? '⊘ Anulada' : a.status === 'completed' ? 'Terminada' : 'Sin terminar'}
-            </td>
-            <td>{a.score === null ? '—' : `${a.score}/${a.maxScore}`}</td>
-            <td>{fmt(a.errorCount)}</td>
-            <td>{fmt(a.doseMsv, 2)}</td>
-            <td>{fmt(a.timeSeconds, 1)}</td>
-            <td>{a.tier ? <span className={`mg-badge ${TIER_INFO[a.tier]?.className || ''}`}>{TIER_INFO[a.tier]?.label || a.tier}</span> : '—'}</td>
-            <td>{a.status !== 'completed' ? '—' : a.voided ? <s>+{a.pointsAwarded}</s> : `+${a.pointsAwarded}`}</td>
-          </tr>
+          <Fragment key={a.id}>
+            <tr data-tier={a.tier || 'none'} data-voided={a.voided ? 'true' : undefined}
+              style={a.voided ? { opacity: 0.55 } : undefined}>
+              <td>{when(a.startedAt)}</td>
+              <td title={a.voided ? `Anulada el ${when(a.voidedAt)}: ${a.voidReason || ''}` : undefined}>
+                {a.voided ? '⊘ Anulada' : a.status === 'completed' ? 'Terminada' : 'Sin terminar'}
+              </td>
+              <td>{a.score === null ? '—' : `${a.score}/${a.maxScore}`}</td>
+              <td>{fmt(a.errorCount)}</td>
+              <td>{fmt(a.doseMsv, 2)}</td>
+              <td>{fmt(a.timeSeconds, 1)}</td>
+              <td>{a.tier ? <span className={`mg-badge ${TIER_INFO[a.tier]?.className || ''}`}>{TIER_INFO[a.tier]?.label || a.tier}</span> : '—'}</td>
+              <td>{a.status !== 'completed' ? '—' : a.voided ? <s>+{a.pointsAwarded}</s> : `+${a.pointsAwarded}`}</td>
+            </tr>
+            {/* Qué hizo mal y en qué segundo (lo envía Unity; las partidas de builds anteriores no lo traen) */}
+            {a.errors?.length > 0 && (
+              <tr data-attempt-errors={a.id}>
+                <td colSpan={8} style={{ paddingTop: 0 }}>
+                  <ul className="attempt-errors">
+                    {a.errors.map((err, index) => (
+                      <li key={`${a.id}-${index}`} data-error-code={err.code}>
+                        <span className="text-muted">{err.atSeconds !== null ? `⏱ ${fmt(err.atSeconds, 1)} s` : '⏱ —'}</span>{' '}
+                        <code>{err.code}</code>{err.message ? ` — ${err.message}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </td>
+              </tr>
+            )}
+          </Fragment>
         ))}
       </tbody>
     </table>

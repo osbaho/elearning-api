@@ -3,6 +3,7 @@ import { COURSE_STEPS, TOTAL_COURSE_STEPS, PRACTICE_STEPS } from '../config/curr
 import { MAX_EXAM_ATTEMPTS, isExamPassingScore, maxAttemptsFor } from '../config/examRules.js';
 import { accessStateFor, todayIso } from './access.js';
 import { caseDto } from './supportCases.js';
+import { readErrorDetail } from './simulatorErrors.js';
 
 /**
  * Seguimiento del avance (Fase 2): por estudiante, avance y paso actual, mejor resultado de cada
@@ -332,6 +333,8 @@ function mapAttempt(a) {
     voided: Boolean(a.voided_at),
     voidedAt: toIso(a.voided_at),
     voidReason: a.void_reason || null,
+    // Qué hizo mal y en qué segundo (lo envía Unity; [] en partidas de builds anteriores)
+    errors: readErrorDetail(a.error_detail),
   };
 }
 
@@ -359,7 +362,7 @@ export async function loadStudentDetail(
   );
   const attempts = await db.all(
     `SELECT id, step_id, status, started_at, completed_at, score, max_score, passed, error_count, dose_msv,
-            time_seconds, tier, points_awarded, voided_at, void_reason
+            time_seconds, tier, points_awarded, voided_at, void_reason, error_detail
        FROM simulator_attempts WHERE student_id = ? ORDER BY started_at`,
     [studentId]
   );

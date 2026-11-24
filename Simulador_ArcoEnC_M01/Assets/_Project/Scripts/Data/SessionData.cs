@@ -64,6 +64,18 @@ namespace CArmSimulator.Data
     /// Granular pedagogical result for an individual minigame.
     /// Maps directly to cmi.interactions in LMS SCORM 1.2 / 2004.
     /// </summary>
+    /// <summary>
+    /// Detalle de un error del estudiante en una partida: qué hizo mal y en qué segundo.
+    /// Viaja a la plataforma ArcoC en PhaseResultMessage.errors (contrato con la API: no renombrar).
+    /// </summary>
+    [Serializable]
+    public class ErrorEntry
+    {
+        public string code;
+        public string message;
+        public float atSeconds;
+    }
+
     [Serializable]
     public class MinigameResult
     {
@@ -75,6 +87,7 @@ namespace CArmSimulator.Data
         public float timeTaken; // In seconds
         public bool passed;
         public int errorCount;
+        public ErrorEntry[] errors;
         public string feedback;
 
         public float ScorePercent => maxScore > 0 ? (float)score / maxScore * 100f : 0f;

@@ -25,6 +25,8 @@ namespace CArmSimulator.Scorm
         public int errorCount;
         public float doseMsv;
         public float timeSeconds;
+        /// <summary>Detalle de cada error (código, mensaje y segundo). Opcional para la API.</summary>
+        public ErrorEntry[] errors;
     }
 
     /// <summary>

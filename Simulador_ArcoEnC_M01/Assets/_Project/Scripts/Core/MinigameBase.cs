@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using CArmSimulator.Core.Interfaces;
 using CArmSimulator.Data;
@@ -25,6 +26,9 @@ namespace CArmSimulator.Core
         protected float timeLimit = 300f;
         protected int currentScore = 0;
         protected int errorCount = 0;
+        // Detalle de cada error (qué y cuándo) para la plataforma; acotado como en la API
+        protected const int MaxErrorLogEntries = 50;
+        protected readonly List<ErrorEntry> errorLog = new List<ErrorEntry>();
         protected int failedAttemptsCount = 0;
         protected bool isTimerFrozenByTutor = false;
         protected bool isActive = false;
@@ -45,6 +49,8 @@ namespace CArmSimulator.Core
         // IScorable Properties
         public int CurrentScore => currentScore;
         public int ErrorCount => errorCount;
+        /// <summary>Copia del detalle de errores de la partida en curso.</summary>
+        public ErrorEntry[] GetErrorLog() => errorLog.ToArray();
         public int MaxScore => config != null ? config.maxScore : 100;
         public float NormalizedScore => MaxScore > 0 ? (float)currentScore / MaxScore : 0f;
 
@@ -109,6 +115,7 @@ namespace CArmSimulator.Core
             elapsedTime = 0f;
             currentScore = 0;
             errorCount = 0;
+            errorLog.Clear();
             isCompleted = false;
             Passed = false;
             isPaused = false;
@@ -144,6 +151,7 @@ namespace CArmSimulator.Core
             elapsedTime = 0f;
             currentScore = 0;
             errorCount = 0;
+            errorLog.Clear();
             lastReportedSecond = -1;
 
             OnScoreChanged?.Invoke(NormalizedScore);
@@ -192,6 +200,7 @@ namespace CArmSimulator.Core
                 timeTaken = elapsedTime,
                 passed = passed,
                 errorCount = errorCount,
+                errors = errorLog.ToArray(),
                 feedback = finalFeedback
             };
 
@@ -215,10 +224,22 @@ namespace CArmSimulator.Core
             Debug.Log($"[{GetType().Name}] Score updated: {currentScore}/{MaxScore} ({points:+0;-0;0} pts)");
         }
 
-        /// <summary>Records an instructional error/penalty.</summary>
-        protected void RecordError(int pointsPenalty = 0)
+        /// <summary>
+        /// Records an instructional error/penalty. <paramref name="code"/> y <paramref name="message"/>
+        /// describen el error para la plataforma (qué hizo mal); se guarda el segundo de la partida.
+        /// </summary>
+        protected void RecordError(int pointsPenalty = 0, string code = null, string message = null)
         {
             errorCount++;
+            if (errorLog.Count < MaxErrorLogEntries)
+            {
+                errorLog.Add(new ErrorEntry
+                {
+                    code = string.IsNullOrEmpty(code) ? "ERROR" : code,
+                    message = message ?? string.Empty,
+                    atSeconds = elapsedTime
+                });
+            }
             if (pointsPenalty != 0)
             {
                 AddScore(-Mathf.Abs(pointsPenalty));

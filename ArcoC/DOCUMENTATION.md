@@ -139,7 +139,8 @@ ArcoC/
 │   │   ├── progressTracking.js    # Avance, mejor nivel por minijuego, última actividad, alertas y ficha
 │   │   ├── testStudents.js        # Estudiantes de prueba: exclusión de estadísticas y herramientas
 │   │   ├── supportCases.js        # Validación y formato de los casos reportados
-│   │   └── reopen.js              # Reabrir pasos: anular partidas, descontar puntos, intentos adicionales
+│   │   ├── reopen.js              # Reabrir pasos: anular partidas, descontar puntos, intentos adicionales
+│   │   └── simulatorErrors.js     # Detalle de errores de cada partida que envía Unity (validación y lectura)
 │   └── scripts/
 │       ├── seed.js                # Inicialización de cuenta de Administrador
 │       ├── seed_50_questions.js   # Banco oficial de 50 preguntas médicas (actualizado a 2026/ACHS)
@@ -197,7 +198,7 @@ ArcoC/
     │   ├── loginHelper.js         # Utilidad de login y reset para tests
     │   ├── simulatorHelper.js     # Partidas del simulador y avance de pasos vía API
     │   └── adminHelper.js         # Sesión de admin en contexto propio, promociones y matrículas vía API
-    └── e2e/                       # 31 suites Playwright (ver sección 13)
+    └── e2e/                       # 32 suites Playwright (ver sección 13)
 ```
 
 En la raíz del monorepo, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) corre el lint del cliente y la suite E2E sobre SQLite y PostgreSQL (ver sección 13).
@@ -324,6 +325,9 @@ Historial de intentos del examen, una fila por intento:
 #### 12. `support_cases` (migración 5)
 Casos de «Reportar un problema» (sección 10.13): `student_id`, `step_id` (paso de la malla, `exam` o vacío), `category` (`video` | `minigame` | `exam` | `account` | `other`), `description`, `context` (JSON con URL, navegador y tamaño de ventana), `status` (`open` | `resolved` | `rejected`), `created_at`, `resolved_at`, `resolved_by_admin_id` y `resolution` (la respuesta que recibe el estudiante).
 
+#### Columna agregada por la migración 7
+* `simulator_attempts.error_detail` (JSON): el detalle de errores que envía Unity con el resultado de la partida, `[{ code, message, atSeconds }]`, hasta 50. Las partidas de builds anteriores no lo tienen (sección 6, «Detalle de Errores de la Partida»).
+
 #### Columnas agregadas por la migración 6
 * `simulator_attempts`: `voided_at`, `voided_by_admin_id` y `void_reason`, para las partidas anuladas al reabrir un minijuego. Se conservan, pero no cuentan (sección 10.14).
 * `students.exam_bonus_attempts` (0 por defecto): intentos adicionales del examen concedidos por el admin.
@@ -403,7 +407,8 @@ Página /course/practice/m1_s1 (SimulatorView.js)
 Unity WebGL (plantilla CArmEmbed + ScormBridge + ArcoEnC_SCORM.jslib)
   3. Carga escena y fase (WebLaunchContext / WebSceneRouter); el estudiante juega
   4. postMessage → { source: "carm-sim", v: 1, type: "phase-result", attemptId, stepId,
-                     phase, score, maxScore, passed, errorCount, doseMsv, timeSeconds }
+                     phase, score, maxScore, passed, errorCount, doseMsv, timeSeconds,
+                     errors: [{ code, message, atSeconds }] }
 Página
   5. Acepta el mensaje solo si event.source es su iframe, el origen es el propio y
      attemptId/stepId coinciden → POST /api/simulator/attempts/:attemptId/result
@@ -420,7 +425,27 @@ Otros mensajes del simulador: `ready` (Unity cargó) y `load-error`. Endpoints (
 | :--- | :--- |
 | `GET /api/simulator/steps/:stepId` | Estado del minijuego: escena y fase, partidas terminadas, puntos ganados y su tope (`maxPoints`). Campos de disponibilidad: `available` (la escena está en el build y se juega en Unity), `inDevelopment` (pendiente) y `canSimulate` (la API admite partidas: siempre fuera de producción, y en producción solo si está listo). Un paso inexistente responde `404`. |
 | `POST /api/simulator/attempts` | Crea una partida. Exige el paso previo completado (403). Responde 404 si el paso no es un minijuego de la malla y 409 si ya fue finalizado o si es un minijuego pendiente en producción. |
-| `POST /api/simulator/attempts/:id/result` | Registra el resultado de la fase y otorga los puntos. Responde `{ tier, pointsAwarded, reservePoints, stepPointsEarned, stepPointsMax, stepCapReached }`. |
+| `POST /api/simulator/attempts/:id/result` | Registra el resultado de la fase y otorga los puntos. Acepta el detalle de errores opcional `errors` (ver «Detalle de Errores de la Partida»). Responde `{ tier, pointsAwarded, reservePoints, stepPointsEarned, stepPointsMax, stepCapReached }`. |
+
+### Detalle de Errores de la Partida ([`server/services/simulatorErrors.js`](server/services/simulatorErrors.js))
+Además de `errorCount`, Unity envía en `phase-result` la lista `errors`: qué hizo mal el estudiante y en qué segundo de la partida. El admin la ve en la ficha del estudiante («Ver partidas», sección 10.10) al revisar un caso reportado.
+
+* **Formato:** hasta 50 elementos `{ code, message, atSeconds }`. `code` tiene hasta 40 caracteres (letras, números, `_`, `.` y `-`); `message` se recorta a 200 caracteres; `atSeconds` va de 0 a 86 400 y se redondea a una décima (si no es válido, queda vacío).
+* **Validación:** `SimulatorView` reenvía la lista (máximo 50) en `POST /api/simulator/attempts/:id/result`. Una lista mal formada responde `400` y la partida no se registra. Se guarda en `simulator_attempts.error_detail` (migración 7).
+* **Compatibilidad:** el campo es opcional. Un build anterior solo envía `errorCount`: sus partidas se registran igual y la ficha no muestra detalle.
+* **En Unity:** `MinigameBase.RecordError(puntos, código, mensaje)` anota cada error con el segundo de la partida (`GetErrorLog()`, hasta 50) y `CArmUIController` lo agrega a `PhaseResultMessage.errors` (`ScormBridge`). Para que llegue a la plataforma hay que regenerar el build WebGL (sección 12.5).
+
+| Minijuego | Código | Cuándo se registra |
+| :--- | :--- | :--- |
+| ProtocolZero (`m1_s1`) | `PZ_LABEL_WRONG` | Identificó mal un componente del arco. |
+| ProtocolZero | `PZ_FIRE_INVERTED` | Disparó con el arco invertido (tubo arriba): la dispersión va hacia el operador. |
+| ProtocolZero | `PZ_PPE_MISSING` | Disparó sin el equipo de protección completo (el mensaje dice cuántos elementos tenía). |
+| BeamMaster (`m1_s2`) | `BM_ANODE_OVERHEAT` | Sobrecalentó el ánodo del tubo y la exposición se bloqueó. |
+| BeamMaster | `BM_EXPOSURE_SUBOPTIMAL` | Exposición no óptima en un caso (kVp, mA o colimación inadecuados). |
+| IsocenterCommand (`m1_s3`) | `IC_AMBIGUOUS_ORDER` | Dio una orden verbal ambigua (el mensaje dice cuáles). |
+| IsocenterCommand | `IC_FAILED_SHOT` | Disparo fallido por una orden verbal inexacta. |
+| IsocenterCommand | `IC_BAD_ROTATION` | Rotación de 90° fuera del isocentro: el hueso salió de la imagen. |
+| Cualquiera | `ERROR` | Error sin código propio (valor por defecto de `RecordError`). |
 
 ### Regla de Puntos por Fase ([`server/config/reservePoints.js`](server/config/reservePoints.js))
 | Resultado | Condición | Puntos |
@@ -757,7 +782,7 @@ Los umbrales están en `ALERT_RULES` (`progressTracking.js`).
 * **Avance por módulo:**
   * Cada video: si lo vio o lo empezó, con fecha.
   * Cada minijuego: si lo finalizó, su mejor nivel, partidas y puntos.
-  * **Ver partidas** muestra de cada partida el inicio, el estado, el puntaje, los errores, la dosis, el tiempo, el nivel y los puntos.
+  * **Ver partidas** muestra de cada partida el inicio, el estado, el puntaje, los errores, la dosis, el tiempo, el nivel y los puntos. Debajo de cada partida lista el detalle de errores que envió Unity: segundo, código y mensaje (sección 6).
 * **Examen:** historial de intentos (`exam_attempts`) con estado, nota y respuestas correctas, y el certificado si aprobó.
 * **Incidencias de supervisión** (`exam_logs`), **correos** (`email_logs`) y **acciones del admin** sobre el estudiante.
 * **Línea de tiempo:** todo lo anterior junto, de lo más reciente a lo más antiguo (hasta 300 eventos).
@@ -966,6 +991,9 @@ Los videos definitivos y el build de Unity son artefactos pesados: **no se versi
     -executeMethod CArmSimulator.EditorTools.ArcoCWebGLBuilder.BuildBatch -logFile build.log
   ```
   Usa la plantilla `Assets/WebGLTemplates/CArmEmbed` (canvas a pantalla completa y puente de mensajes con la plataforma). La compresión WebGL está desactivada, así que no se requieren cabeceras `Content-Encoding` especiales.
+  * La compilación por línea de comandos necesita una licencia de Unity activada en el equipo (Unity Hub → Preferencias → Licencias). Sin ella, Unity termina con «No valid Unity Editor license found» y no toca el build existente.
+  * Se compila la carpeta `Simulador_ArcoEnC_M01` del monorepo, que tiene la integración con la plataforma (`WebLaunchContext`, `ScormBridge`, detalle de errores). Una copia del proyecto fuera del monorepo no la tiene: si se trabaja en otra copia, hay que traer los cambios a esta carpeta antes de compilar.
+  * Tras cambiar scripts del simulador, regenera el build. El que está en `client/public/webgl` sigue funcionando, pero no incluye lo nuevo (por ejemplo, el detalle de errores de la sección 6).
 * Si prefieres versionarlos, usa Git LFS: GitHub rechaza archivos de más de 100 MB.
 * **Banco oficial de preguntas:** una base nueva arranca con 5 preguntas de muestra. En producción hay que cargar las 50 oficiales una vez con `npm run seed:questions`; el script reemplaza el banco, así que no debe correrse con exámenes en curso. La tarjeta de preparación del lanzamiento (sección 10.9) y el aviso al arrancar lo verifican.
 * El lint del cliente (`npm --workspace=client run lint`) no analiza el build WebGL (`client/public/webgl/**`) ni los bundles minificados de terceros (`client/public/**/*.min.js`, como `workers/face-api.min.js`): no son código del proyecto. Ver `globalIgnores` en `client/eslint.config.mjs`.
@@ -1085,10 +1113,10 @@ Microsoft 365 y Google Workspace restringen el SMTP con usuario y contraseña (e
 
 ## 13. Suite de Pruebas Automatizadas (Playwright)
 
-El proyecto cuenta con un conjunto integral de **119 pruebas E2E automatizadas** organizadas en **31 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
+El proyecto cuenta con un conjunto integral de **122 pruebas E2E automatizadas** organizadas en **32 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
 
 ```bash
-# Ejecutar todas las 31 suites E2E (119 pruebas) sobre la base de desarrollo (SQLite)
+# Ejecutar todas las 32 suites E2E (122 pruebas) sobre la base de desarrollo (SQLite)
 npx playwright test
 
 # La misma suite sobre un PostgreSQL 16 desechable (sin Docker; detén antes los servidores de desarrollo)
@@ -1169,6 +1197,7 @@ Las reglas que dependen del tiempo real (visualización mínima de videos y dura
 | **29** | **`29-test-students.test.js`** | **Estudiantes de prueba:** se matriculan con `isTest` y se listan marcados, pero no cuentan en las métricas de la promoción, el resumen del seguimiento, el CSV ni el sello. Su certificado (con el estado copiado de un estudiante aprobado) no se valida en `/api/verify`, y el del estudiante real sí. Herramientas: con un estudiante real responden 409; llevar a `m2_v1` deja 6 pasos; copiar el estado de un estudiante con un video y una partida perfecta trae 2 pasos, la partida y sus puntos sin cambiar al origen; reiniciar vuelve a cero; todo queda en la bitácora con su motivo; se puede desmarcar la cuenta. En el panel: la marca y el indicador «+1 de prueba», y «Llevar a un paso» desde **⚙️ Gestionar**. |
 | **30** | **`30-support-cases.test.js`** | **Reportar un problema:** validaciones puras del reporte (categoría, paso, longitud, solo las claves conocidas del contexto) y de la respuesta. El estudiante reporta un minijuego; el admin no puede abrir casos ni el estudiante ver la bandeja (403); la bandeja trae el caso con su contexto; cerrarlo exige respuesta, un caso cerrado no se cierra de nuevo (409) y uno inexistente da 404; el estudiante ve la respuesta; quedan la bitácora (`case.resolve`), el correo `case_answered`, los reportes de la ficha y su línea de tiempo; con 5 casos abiertos el siguiente da 429. En el navegador: el estudiante reporta desde la tarjeta de un video (categoría preseleccionada) y lo ve en «Mis reportes»; el admin lo encuentra en la bandeja, lo resuelve y pasa a «Resueltos». |
 | **31** | **`31-audited-retries.test.js`** | **Reintentos auditados:** qué pasos se pueden reabrir (función pura). Al reabrir un minijuego finalizado con dos partidas (15 pts), ambas quedan anuladas y se descuentan sus puntos; el paso queda pendiente y el siguiente sigue completado; sin una partida nueva no se finaliza, y la nueva vuelve a sumar 10. La ficha conserva las anuladas con su motivo, y quedan la bitácora y el correo. También se verifica que el motivo sea obligatorio (400), que un paso inválido dé 400, que un minijuego sin partidas dé 409 y que un estudiante no pueda reabrir (403). Un video reabierto deja de estar visto. Con 3 intentos usados, un intento concedido permite empezar otro (`maxAttempts` 4) y el criterio 4 del estándar IES lo da por autorizado; a quien aprobó no se le concede (409). En la ficha: «↺ Reabrir» con motivo deja el minijuego «Reabierto» y muestra sus partidas anuladas. |
+| **32** | **`32-simulator-error-detail.test.js`** | **Detalle de errores de las partidas:** validación pura (hasta 50 elementos, código normalizado, mensaje recortado a 200 caracteres, segundo redondeado a una décima; rechaza lo que no es lista, elementos que no son objetos y códigos con espacios) y lectura segura de lo guardado. Por la API: un detalle inválido responde 400, uno válido se guarda y la ficha lo devuelve, y una partida sin detalle (build anterior) se registra igual. En la página de práctica, con una página que sustituye a Unity, `SimulatorView` reenvía el detalle a la API, la partida suma +5 y la ficha del admin lista cada error con su segundo, código y mensaje. |
 
 ---
 
