@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import VideoPlayer from './VideoPlayer';
+import ReportProblemButton from './ReportProblemButton';
 
 export default function ModuleCard({
   id,
@@ -29,6 +30,8 @@ export default function ModuleCard({
   pdfTourClass,
   // Modo revisión del admin: el video se puede adelantar y no registra inicio ni visto
   preview = false,
+  // «Reportar un problema» al pie de la tarjeta (no en modo revisión)
+  showReport = true,
 }) {
   const hasScore = scoreInfo !== null && scoreInfo !== undefined;
   const status = statusOverride
@@ -91,6 +94,15 @@ export default function ModuleCard({
             </Link>
           )}
         </>
+      )}
+
+      {showReport && (
+        <div className="card-report">
+          <ReportProblemButton
+            stepId={type === 'exam' ? 'exam' : moduleKey || null}
+            category={type === 'video' ? 'video' : type === 'exam' ? 'exam' : 'minigame'}
+          />
+        </div>
       )}
     </div>
   );

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useProctoring } from '../../../hooks/useProctoring';
 import { useAuth } from '../../../context/AuthContext';
+import ReportProblemButton from '../../../components/ReportProblemButton';
 import { useToast } from '../../../context/ToastContext';
 import useSWR from 'swr';
 
@@ -434,6 +435,9 @@ export default function ExamPage() {
                   >
                     {startingExam ? 'Iniciando cámara...' : 'Empezar Examen'}
                   </button>
+                  <div className="mt-16">
+                    <ReportProblemButton stepId="exam" category="exam" />
+                  </div>
                 </div>
               ) : (
                 <div id="exam-main-screen" className="exam-active-content">

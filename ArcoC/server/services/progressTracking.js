@@ -2,6 +2,7 @@ import { all } from '../config/db.js';
 import { COURSE_STEPS, TOTAL_COURSE_STEPS, PRACTICE_STEPS } from '../config/curriculum.js';
 import { MAX_EXAM_ATTEMPTS, isExamPassingScore } from '../config/examRules.js';
 import { accessStateFor, todayIso } from './access.js';
+import { caseDto } from './supportCases.js';
 
 /**
  * Seguimiento del avance (Fase 2): por estudiante, avance y paso actual, mejor resultado de cada
@@ -367,6 +368,8 @@ export async function loadStudentDetail(
        FROM email_logs WHERE student_id = ? ORDER BY id DESC`,
     [studentId]
   );
+  const cases = (await db.all('SELECT * FROM support_cases WHERE student_id = ? ORDER BY id DESC', [studentId]))
+    .map((row) => caseDto(row));
 
   const completedAt = new Map(progress.map((p) => [p.module_id, toIso(p.completed_at)]));
   const viewedAt = new Map(views.map((v) => [v.step_id, toIso(v.started_at)]));
@@ -444,6 +447,10 @@ export async function loadStudentDetail(
     if (l.event_type === 'WILDCARD_USED') push(l.timestamp, 'wildcard', { detail: l.detail || '' });
   }
   for (const e of emailList) push(e.at, 'email', { subject: e.subject, status: e.status, template: e.template });
+  for (const c of cases) {
+    push(c.createdAt, 'case_opened', { caseId: c.id, stepId: c.stepId, category: c.category });
+    if (c.resolvedAt) push(c.resolvedAt, 'case_closed', { caseId: c.id, status: c.status });
+  }
   for (const a of adminActions) {
     push(a.createdAt, 'admin_action', { action: a.action, adminName: a.adminName, reason: a.reason || null });
   }
@@ -473,6 +480,7 @@ export async function loadStudentDetail(
       history: examHistory,
     },
     incidents,
+    cases,
     emails: emailList,
     adminActions,
     timeline: timeline.slice(0, MAX_TIMELINE_EVENTS),

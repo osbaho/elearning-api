@@ -2624,6 +2624,39 @@ main {
   border: 1px solid rgba(124, 77, 255, 0.45);
 }
 
+/* «Reportar un problema» (Fase 4): enlace discreto al pie de cada paso */
+.card-report {
+  margin-top: 12px;
+  text-align: right;
+}
+
+.btn-report {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 4px;
+  text-decoration: underline dotted;
+}
+
+.btn-report:hover {
+  color: var(--accent-cyan);
+}
+
+/* Contador en botones (p. ej. casos reportados abiertos) */
+.count-badge {
+  display: inline-block;
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  background: var(--accent-amber);
+  color: #000;
+}
+
 /* ── Utilidades ──────────────────────────────────────────────────────────────
    Clases que el marcado ya usaba sin estar definidas (sobre todo el panel del admin):
    espaciado, flex/grid, tipografía, bordes y fondos. Van al final para que ganen sobre
