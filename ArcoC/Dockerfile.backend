@@ -6,7 +6,9 @@ WORKDIR /app
 RUN apk add --no-cache python3 make g++
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+# Solo las dependencias del backend. El workspace client (Next.js) va en Dockerfile.frontend:
+# --workspaces=false lo deja fuera aunque client/ llegue a copiarse.
+RUN npm ci --omit=dev --workspaces=false
 
 COPY server.js ./
 COPY server ./server
