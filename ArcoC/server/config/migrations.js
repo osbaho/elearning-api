@@ -262,4 +262,30 @@ export const MIGRATIONS = [
       }
     },
   },
+  {
+    version: 3,
+    name: 'intentos_de_examen',
+    // Fase 2: historial de intentos del examen. Guarda las preguntas que vio el estudiante en cada
+    // intento (los siguientes no las repiten) y su resultado, para la ficha del estudiante.
+    // students.exam_in_progress / exam_question_ids siguen siendo el intento abierto.
+    async up(db) {
+      const { id } = db.types;
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS exam_attempts (
+          id ${id},
+          student_id INTEGER NOT NULL,
+          attempt_number INTEGER NOT NULL,
+          question_ids TEXT NOT NULL,
+          question_count INTEGER NOT NULL,
+          status TEXT NOT NULL DEFAULT 'in_progress',
+          score REAL,
+          correct_count INTEGER,
+          started_at TEXT NOT NULL,
+          finished_at TEXT,
+          UNIQUE(student_id, attempt_number)
+        )
+      `);
+      await db.run('CREATE INDEX IF NOT EXISTS idx_exam_attempts_student ON exam_attempts(student_id)');
+    },
+  },
 ];

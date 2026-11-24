@@ -10,6 +10,7 @@ import CohortManagerModal from './_components/CohortManagerModal';
 import StudentManageModal from './_components/StudentManageModal';
 import ImportStudentsModal from './_components/ImportStudentsModal';
 import AdminActionsModal from './_components/AdminActionsModal';
+import LaunchReadinessCard from './_components/LaunchReadinessCard';
 import { EMAIL_STATUS, accountStatus } from './_components/adminLabels';
 
 const EMPTY_REG_FORM = {
@@ -509,6 +510,9 @@ export default function AdminPage() {
           </button>
         </div>
       </div>
+
+      {/* Qué falta para el lanzamiento: videos, minijuegos y banco de preguntas */}
+      <LaunchReadinessCard />
 
       {/* Última matrícula: enlace de activación por si el correo no llega */}
       {lastEnrollment && (

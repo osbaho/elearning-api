@@ -3,7 +3,8 @@ import fs from 'fs';
 import path from 'path';
 import { performLogin, resetStudentState } from '../helpers/loginHelper.js';
 import { playSimulatorPhase, PERFECT_RESULT } from '../helpers/simulatorHelper.js';
-import { COURSE_STEPS, TOTAL_COURSE_STEPS, VIDEO_DURATION_SECONDS, isVideoStep } from '../../server/config/curriculum.js';
+import { COURSE_STEPS, TOTAL_COURSE_STEPS, VIDEO_DURATION_SECONDS, isVideoStep, isPracticeStep } from '../../server/config/curriculum.js';
+import { getSimulatorEntry } from '../../server/config/simulatorCatalog.js';
 
 const API = 'http://localhost:5000/api';
 const MODULE1_VIDEOS = ['M01_V01_SER.mp4', 'M01_V02_Fisica.mp4', 'M01_V03_Geometria.mp4'];
@@ -31,22 +32,38 @@ const FAKE_UNITY_PAGE = `<!doctype html><html><body><script>
 </script></body></html>`;
 
 test.describe('Módulo 1: malla, videos y simulador', () => {
-  test('La malla del cliente coincide con la del servidor (26 pasos, módulo 1 = 3 videos + 3 minijuegos)', async () => {
+  test('La malla del cliente coincide con la del servidor (30 pasos: 5 módulos de 3 videos + 3 minijuegos)', async () => {
     const configSource = fs.readFileSync(path.resolve('client/src/lib/courseConfig.js'), 'utf8');
     const clientSteps = [...configSource.matchAll(/key:\s*'(m\d+_[a-z0-9]+)'/g)].map(m => m[1]);
 
     expect(clientSteps).toEqual([...COURSE_STEPS]);
-    expect(TOTAL_COURSE_STEPS).toBe(26);
-    expect(COURSE_STEPS.slice(0, 6)).toEqual(['m1_v1', 'm1_s1', 'm1_v2', 'm1_s2', 'm1_v3', 'm1_s3']);
-    expect(COURSE_STEPS).not.toContain('m1_vr');
+    expect(TOTAL_COURSE_STEPS).toBe(30);
+    for (let m = 1; m <= 5; m++) {
+      expect(COURSE_STEPS.slice((m - 1) * 6, m * 6), `módulo ${m}`)
+        .toEqual([`m${m}_v1`, `m${m}_s1`, `m${m}_v2`, `m${m}_s2`, `m${m}_v3`, `m${m}_s3`]);
+    }
+    expect(COURSE_STEPS.some(step => step.endsWith('_vr'))).toBe(false);
     for (const video of MODULE1_VIDEOS) {
       expect(configSource).toContain(`/videos/modulo1/${video}`);
     }
-    // Cada video de la malla tiene su duración registrada (define el tiempo mínimo de visualización)
+    // Los videos publicados tienen su duración (define el tiempo mínimo de visualización); los
+    // pendientes, null. Los del módulo 1 son definitivos.
     const videoSteps = COURSE_STEPS.filter(isVideoStep);
     expect(videoSteps.length).toBe(15);
     for (const step of videoSteps) {
-      expect(VIDEO_DURATION_SECONDS[step], step).toBeGreaterThan(0);
+      const duration = VIDEO_DURATION_SECONDS[step];
+      expect(duration === null || duration > 0, step).toBeTruthy();
+      if (step.startsWith('m1_')) expect(duration, step).toBeGreaterThan(0);
+    }
+    // Cada minijuego tiene escena y fase en el catálogo del simulador; los del módulo 1 están en el build
+    const practiceSteps = COURSE_STEPS.filter(isPracticeStep);
+    expect(practiceSteps.length).toBe(15);
+    for (const step of practiceSteps) {
+      const entry = getSimulatorEntry(step);
+      expect(entry, step).toBeTruthy();
+      expect(entry.phase, step).toBe(Number(step.split('_s')[1]));
+      expect(typeof entry.ready, step).toBe('boolean');
+      if (step.startsWith('m1_')) expect(entry.ready, step).toBe(true);
     }
   });
 
@@ -71,12 +88,16 @@ test.describe('Módulo 1: malla, videos y simulador', () => {
     await resetStudentState(page.request, { reserve_points: 0 });
     const req = page.request;
 
-    // Práctica de la malla sin contenido Unity: estado válido (200, no disponible); paso inexistente: 404
-    const noSim = await req.get(`${API}/simulator/steps/m2_s1`);
-    expect(noSim.status()).toBe(200);
-    expect(await noSim.json()).toMatchObject({ stepId: 'm2_s1', available: false, stepCompleted: false });
+    // Minijuego pendiente (sin escena en el build): "en desarrollo". Fuera de producción admite
+    // partidas por API (canSimulate); aquí la secuencia todavía lo bloquea. Paso inexistente: 404
+    const pending = await req.get(`${API}/simulator/steps/m2_s1`);
+    expect(pending.status()).toBe(200);
+    expect(await pending.json()).toMatchObject({
+      stepId: 'm2_s1', available: false, inDevelopment: true, canSimulate: true, stepCompleted: false,
+    });
     expect((await req.get(`${API}/simulator/steps/m9_s9`)).status()).toBe(404);
-    expect((await req.post(`${API}/simulator/attempts`, { data: { stepId: 'm2_s1' } })).status()).toBe(404);
+    expect((await req.post(`${API}/simulator/attempts`, { data: { stepId: 'm9_s9' } })).status()).toBe(404);
+    expect((await req.post(`${API}/simulator/attempts`, { data: { stepId: 'm2_s1' } })).status()).toBe(403);
 
     // Secuencia: el video previo debe estar completo
     const early = await req.post(`${API}/simulator/attempts`, { data: { stepId: 'm1_s1' } });

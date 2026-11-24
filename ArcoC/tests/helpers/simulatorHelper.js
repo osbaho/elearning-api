@@ -1,7 +1,9 @@
 const API = 'http://localhost:5000/api';
 
-// Pasos prácticos con contenido en el simulador Unity (server/config/simulatorCatalog.js)
-export const SIMULATOR_STEPS = ['m1_s1', 'm1_s2', 'm1_s3'];
+// Minijuegos de la malla (m<módulo>_s<n>). Todos exigen una partida terminada para finalizarse.
+// Los que aún no están en el build WebGL (ready: false en server/config/simulatorCatalog.js)
+// admiten partidas por API fuera de producción, que es como corre la suite.
+const PRACTICE_STEP_PATTERN = /^m\d+_s\d+$/;
 
 export const PERFECT_RESULT = { score: 100, maxScore: 100, passed: true, errorCount: 0, doseMsv: 0, timeSeconds: 1 };
 
@@ -26,11 +28,11 @@ export async function playSimulatorPhase(request, stepId, result = {}) {
 }
 
 /**
- * Marca un paso como completado. Si el paso tiene simulador, primero juega una partida
- * (la API exige al menos una partida terminada para finalizar esos minijuegos).
+ * Marca un paso como completado. Si es un minijuego, primero juega una partida
+ * (la API exige al menos una partida terminada para finalizarlo).
  */
 export async function completeStep(request, stepId) {
-  if (SIMULATOR_STEPS.includes(stepId)) {
+  if (PRACTICE_STEP_PATTERN.test(stepId)) {
     await playSimulatorPhase(request, stepId);
   }
   const res = await request.post(`${API}/progress/${stepId}`);

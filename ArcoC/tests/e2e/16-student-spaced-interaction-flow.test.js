@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { resetStudentState } from '../helpers/loginHelper.js';
-import { playSimulatorPhase } from '../helpers/simulatorHelper.js';
+import { completeStep } from '../helpers/simulatorHelper.js';
 import { initDb, all, run } from '../../server/config/db.js';
 import fs from 'fs';
 import path from 'path';
@@ -24,7 +24,9 @@ test.describe('Student Multi-Session Spaced Learning Journey (3-day intervals, ~
     const targetPath = path.join(SCREENSHOT_DIR, filename);
     const publicPath = path.join(PUBLIC_SCREENSHOT_DIR, filename);
     await page.screenshot({ path: targetPath, fullPage: true });
-    fs.copyFileSync(targetPath, publicPath);
+    // Las capturas publicadas solo se renuevan a pedido (UPDATE_PUBLIC_SCREENSHOTS=1): así una
+    // corrida normal no modifica archivos versionados
+    if (process.env.UPDATE_PUBLIC_SCREENSHOTS === '1') fs.copyFileSync(targetPath, publicPath);
   };
 
   const loginUser = async (page) => {
@@ -43,18 +45,6 @@ test.describe('Student Multi-Session Spaced Learning Journey (3-day intervals, ~
     });
     await page.goto('/login');
     await page.waitForSelector('.login-card');
-  };
-
-  // Minijuegos del módulo 1: se juegan en el simulador (resultado vía API) antes de finalizarlos
-  const playAndFinish = async (page, stepId) => {
-    await playSimulatorPhase(page.request, stepId);
-    await page.request.post(`http://localhost:5000/api/progress/${stepId}`);
-  };
-
-  // Minijuegos de los módulos 2–5: aún sin simulador, los puntos llegan por el endpoint de desarrollo
-  const earnAndFinish = async (page, stepId) => {
-    await page.request.post('http://localhost:5000/api/add-points', { data: { points: 50, source: stepId } });
-    await page.request.post(`http://localhost:5000/api/progress/${stepId}`);
   };
 
   test('Simulates a 27-day spaced learning path advancing ~10% every 3 days until certification', async ({ page, request }) => {
@@ -106,137 +96,68 @@ test.describe('Student Multi-Session Spaced Learning Journey (3-day intervals, ~
     await page.goto('/course');
     await page.waitForSelector('.course-layout-container');
 
-    // ── Sesión 1 (Día 0 - Avance 8%): Video 1 y Minijuego 1 ──────────────────
+    // ── Sesión 1 (Día 0 - Avance 7%): Video 1 y Minijuego 1 ──────────────────
     await page.request.post('http://localhost:5000/api/progress/m1_v1');
-    await playAndFinish(page, 'm1_s1');
+    await completeStep(page.request, 'm1_s1');
 
     await page.reload();
     await page.waitForSelector('.course-layout-container');
-    await expect(page.locator('.course-progress-container')).toContainText('2 / 26 pasos');
-    await saveScreenshot(page, 'spaced-01-day0-session1-8percent.png');
+    await expect(page.locator('.course-progress-container')).toContainText('2 / 30 pasos');
+    await saveScreenshot(page, 'spaced-01-day0-session1-7percent.png');
     await logoutUser(page);
 
-    // ── Sesión 2 (Día 3 - Avance a 23%): Videos 2 y 3 con sus minijuegos (Cierre Módulo 1)
+    // ── Sesión 2 (Día 3 - Avance a 20%): Videos 2 y 3 con sus minijuegos (Cierre Módulo 1)
     await loginUser(page);
     // Verificar persistencia de sesión previa
-    await expect(page.locator('.course-progress-container')).toContainText('2 / 26 pasos');
+    await expect(page.locator('.course-progress-container')).toContainText('2 / 30 pasos');
 
     await page.request.post('http://localhost:5000/api/progress/m1_v2');
-    await playAndFinish(page, 'm1_s2');
+    await completeStep(page.request, 'm1_s2');
     await page.request.post('http://localhost:5000/api/progress/m1_v3');
-    await playAndFinish(page, 'm1_s3');
+    await completeStep(page.request, 'm1_s3');
 
     await page.reload();
     await page.waitForSelector('.course-layout-container');
-    await expect(page.locator('.course-progress-container')).toContainText('6 / 26 pasos');
-    await expect(page.locator('.course-progress-container')).toContainText('23% completado');
-    await saveScreenshot(page, 'spaced-02-day3-session2-23percent.png');
+    await expect(page.locator('.course-progress-container')).toContainText('6 / 30 pasos');
+    await expect(page.locator('.course-progress-container')).toContainText('20% completado');
+    await saveScreenshot(page, 'spaced-02-day3-session2-20percent.png');
     await logoutUser(page);
 
-    // ── Sesión 3 (Día 6 - Avance a 31%): Pasos 7 y 8 ─────────────────────────
-    await loginUser(page);
-    await expect(page.locator('.course-progress-container')).toContainText('6 / 26 pasos');
+    // ── Sesiones 3 a 10 (Días 6 a 27): 3 pasos por sesión, un 10 % del curso cada una ──
+    const SESSIONS = [
+      { day: 6, steps: ['m2_v1', 'm2_s1', 'm2_v2'] },
+      { day: 9, steps: ['m2_s2', 'm2_v3', 'm2_s3'], screenshot: 'spaced-03-day9-session4-40percent.png' },
+      { day: 12, steps: ['m3_v1', 'm3_s1', 'm3_v2'] },
+      { day: 15, steps: ['m3_s2', 'm3_v3', 'm3_s3'], screenshot: 'spaced-04-day15-session6-60percent.png' },
+      { day: 18, steps: ['m4_v1', 'm4_s1', 'm4_v2'] },
+      { day: 21, steps: ['m4_s2', 'm4_v3', 'm4_s3'], screenshot: 'spaced-05-day21-session8-80percent.png' },
+      { day: 24, steps: ['m5_v1', 'm5_s1', 'm5_v2'] },
+      { day: 27, steps: ['m5_s2', 'm5_v3', 'm5_s3'] },
+    ];
+    const progressBox = page.locator('.course-progress-container');
+    let completed = 6;
+    for (const [index, session] of SESSIONS.entries()) {
+      await loginUser(page);
+      // El avance de la sesión anterior persiste
+      await expect(progressBox).toContainText(`${completed} / 30 pasos`);
 
-    await page.request.post('http://localhost:5000/api/progress/m2_v1');
-    await earnAndFinish(page, 'm2_s1');
+      for (const stepId of session.steps) {
+        await completeStep(page.request, stepId);
+      }
+      completed += session.steps.length;
 
-    await page.reload();
-    await page.waitForSelector('.course-layout-container');
-    await expect(page.locator('.course-progress-container')).toContainText('8 / 26 pasos');
-    await logoutUser(page);
-
-    // ── Sesión 4 (Día 9 - Avance a 42%): Pasos 9, 10 y 11 (Cierre Módulo 2) ──
-    await loginUser(page);
-    await expect(page.locator('.course-progress-container')).toContainText('8 / 26 pasos');
-
-    await page.request.post('http://localhost:5000/api/progress/m2_v2');
-    await earnAndFinish(page, 'm2_s2');
-    await page.request.post('http://localhost:5000/api/progress/m2_vr');
-
-    await page.reload();
-    await page.waitForSelector('.course-layout-container');
-    await expect(page.locator('.course-progress-container')).toContainText('11 / 26 pasos');
-    await expect(page.locator('.course-progress-container')).toContainText('42% completado');
-    await saveScreenshot(page, 'spaced-03-day9-session4-42percent.png');
-    await logoutUser(page);
-
-    // ── Sesión 5 (Día 12 - Avance a 50%): Pasos 12 y 13 ──────────────────────
-    await loginUser(page);
-    await expect(page.locator('.course-progress-container')).toContainText('11 / 26 pasos');
-
-    await page.request.post('http://localhost:5000/api/progress/m3_v1');
-    await earnAndFinish(page, 'm3_s1');
+      await page.reload();
+      await page.waitForSelector('.course-layout-container');
+      await expect(progressBox).toContainText(`${completed} / 30 pasos`);
+      await expect(progressBox).toContainText(`${Math.round((completed / 30) * 100)}% completado`);
+      if (session.screenshot) await saveScreenshot(page, session.screenshot);
+      // La última sesión sigue con el examen sin cerrar sesión
+      if (index < SESSIONS.length - 1) await logoutUser(page);
+    }
 
     await page.reload();
     await page.waitForSelector('.course-layout-container');
-    await expect(page.locator('.course-progress-container')).toContainText('13 / 26 pasos');
-    await logoutUser(page);
-
-    // ── Sesión 6 (Día 15 - Avance a 62%): Pasos 14, 15 y 16 (Cierre Módulo 3)
-    await loginUser(page);
-    await expect(page.locator('.course-progress-container')).toContainText('13 / 26 pasos');
-
-    await page.request.post('http://localhost:5000/api/progress/m3_v2');
-    await earnAndFinish(page, 'm3_s2');
-    await page.request.post('http://localhost:5000/api/progress/m3_vr');
-
-    await page.reload();
-    await page.waitForSelector('.course-layout-container');
-    await expect(page.locator('.course-progress-container')).toContainText('16 / 26 pasos');
-    await expect(page.locator('.course-progress-container')).toContainText('62% completado');
-    await saveScreenshot(page, 'spaced-04-day15-session6-62percent.png');
-    await logoutUser(page);
-
-    // ── Sesión 7 (Día 18 - Avance a 69%): Pasos 17 y 18 ──────────────────────
-    await loginUser(page);
-    await expect(page.locator('.course-progress-container')).toContainText('16 / 26 pasos');
-
-    await page.request.post('http://localhost:5000/api/progress/m4_v1');
-    await earnAndFinish(page, 'm4_s1');
-
-    await page.reload();
-    await page.waitForSelector('.course-layout-container');
-    await expect(page.locator('.course-progress-container')).toContainText('18 / 26 pasos');
-    await logoutUser(page);
-
-    // ── Sesión 8 (Día 21 - Avance a 81%): Pasos 19, 20 y 21 (Cierre Módulo 4)
-    await loginUser(page);
-    await expect(page.locator('.course-progress-container')).toContainText('18 / 26 pasos');
-
-    await page.request.post('http://localhost:5000/api/progress/m4_v2');
-    await earnAndFinish(page, 'm4_s2');
-    await page.request.post('http://localhost:5000/api/progress/m4_vr');
-
-    await page.reload();
-    await page.waitForSelector('.course-layout-container');
-    await expect(page.locator('.course-progress-container')).toContainText('21 / 26 pasos');
-    await expect(page.locator('.course-progress-container')).toContainText('81% completado');
-    await saveScreenshot(page, 'spaced-05-day21-session8-81percent.png');
-    await logoutUser(page);
-
-    // ── Sesión 9 (Día 24 - Avance a 88%): Pasos 22 y 23 ──────────────────────
-    await loginUser(page);
-    await expect(page.locator('.course-progress-container')).toContainText('21 / 26 pasos');
-
-    await page.request.post('http://localhost:5000/api/progress/m5_v1');
-    await earnAndFinish(page, 'm5_s1');
-
-    await page.reload();
-    await page.waitForSelector('.course-layout-container');
-    await expect(page.locator('.course-progress-container')).toContainText('23 / 26 pasos');
-    await logoutUser(page);
-
-    // ── Sesión 10 (Día 27 - 100% y Graduación Oficial): Pasos 24, 25 y 26 ────
-    await loginUser(page);
-    await expect(page.locator('.course-progress-container')).toContainText('23 / 26 pasos');
-
-    await page.request.post('http://localhost:5000/api/progress/m5_v2');
-    await earnAndFinish(page, 'm5_s2');
-    await page.request.post('http://localhost:5000/api/progress/m5_vr');
-
-    await page.reload();
-    await page.waitForSelector('.course-layout-container');
-    await expect(page.locator('.course-progress-container')).toContainText('26 / 26 pasos');
+    await expect(page.locator('.course-progress-container')).toContainText('30 / 30 pasos');
     await expect(page.locator('.course-progress-container')).toContainText('100% completado');
 
     // Verificar que el Examen Final está habilitado

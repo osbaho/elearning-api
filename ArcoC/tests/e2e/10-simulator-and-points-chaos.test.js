@@ -34,7 +34,7 @@ test.describe('Simulator & Reserve Points Chaos Testing', () => {
     const maliciousSources = [
       'exam',
       'm1_v1', // video no es módulo interactivo
-      'm1_vr', // video recopilatorio no es interactivo
+      'm1_vr', // paso retirado: ya no existe en la malla
       '../../../etc/passwd',
       'DROP TABLE students',
       'm9_s1', // módulo inexistente

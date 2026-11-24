@@ -125,8 +125,12 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
   const maxPoints = 500;
   const progressPercent = Math.min((currentPoints / maxPoints) * 100, 100);
   const isCompleted = Boolean(user?.completedModules?.includes(moduleId) || stepInfo?.stepCompleted);
+  // available: la escena está en el build y se juega en Unity. Un minijuego pendiente se muestra
+  // "en desarrollo"; fuera de producción la API admite partidas simuladas (canSimulate).
   const hasSimulator = stepInfo?.available === true;
-  const canFinish = !hasSimulator || completedAttempts > 0;
+  const canSimulateInDev = IS_DEV && stepInfo?.canSimulate === true;
+  // Todo minijuego exige al menos una partida terminada para finalizarse
+  const canFinish = completedAttempts > 0;
 
   const modKey = moduleId?.slice(0, 2) || 'm1';
   const guideData = MODULE_GUIDE_ASSETS[modKey];
@@ -202,7 +206,7 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
       const next = { attemptId: data.attemptId, scene: data.scene, phase: data.phase };
       attemptRef.current = next;
       setAttempt(next);
-      const willLoadUnity = buildState === 'available';
+      const willLoadUnity = buildState === 'available' && hasSimulator;
       setAttemptState(willLoadUnity ? 'loading' : 'playing');
       setStatus(willLoadUnity ? 'Cargando simulador...' : 'Partida iniciada');
       return next;
@@ -212,7 +216,7 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
       addToast(`Error de red: ${err.message}`, 'error');
       return null;
     }
-  }, [api, moduleId, isCompleted, buildState, addToast]);
+  }, [api, moduleId, isCompleted, buildState, hasSimulator, addToast]);
 
   const submitResult = useCallback(async (current, result) => {
     if (submittedAttemptsRef.current.has(current.attemptId)) return;
@@ -381,8 +385,10 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
           <div className="sim-icon">🦾</div>
           <div className="sim-placeholder-title">Práctica en desarrollo</div>
           <div className="sim-placeholder-text">
-            El minijuego de este paso todavía no está disponible en el simulador.
+            El minijuego de este paso todavía no está disponible en el simulador. Podrás continuar el
+            curso cuando se publique.
             {stepInfo.error ? ` (${stepInfo.error})` : ''}
+            {canSimulateInDev ? ' En desarrollo puedes registrar partidas simuladas con los botones de abajo.' : ''}
           </div>
         </div>
       );
@@ -453,7 +459,7 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
         <div>
           {renderStage()}
 
-          {!isCompleted && hasSimulator && (
+          {!isCompleted && (hasSimulator || canSimulateInDev) && (
             <>
               {lastResult && tierInfo && (
                 <div className="card mt-16 p-20 border-cyan radius-lg" role="status" aria-live="polite">
@@ -474,7 +480,7 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
                 {showIframe && (attemptState === 'finished' || attemptState === 'error') && (
                   <button className="btn btn-secondary" onClick={startAttempt} disabled={busy}>🔁 Jugar de nuevo</button>
                 )}
-                {!showIframe && lastResult && buildState === 'available' && (
+                {hasSimulator && !showIframe && lastResult && buildState === 'available' && (
                   <button className="btn btn-secondary" onClick={startAttempt} disabled={busy}>🔁 Jugar de nuevo</button>
                 )}
                 {showIframe && (
@@ -507,7 +513,9 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
               <p className="text-muted mt-8 text-xs">
                 {canFinish
                   ? 'Al finalizar no podrás sumar más puntos.'
-                  : 'Termina al menos una partida en el simulador para poder finalizar.'}
+                  : hasSimulator || canSimulateInDev
+                    ? 'Termina al menos una partida en el simulador para poder finalizar.'
+                    : 'Podrás finalizar esta práctica cuando su minijuego esté disponible.'}
               </p>
             </div>
           )}

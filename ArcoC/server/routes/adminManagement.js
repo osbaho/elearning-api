@@ -10,6 +10,7 @@ import { sendWelcomeInductionEmail, sendPasswordResetEmail } from '../services/e
 import { retryEmail } from '../services/mailer.js';
 import { accessStateFor, getStudentAccess } from '../services/access.js';
 import { parseStudentsCsv, STUDENTS_CSV_TEMPLATE } from '../utils/csv.js';
+import { getLaunchReadiness } from '../services/launchReadiness.js';
 
 /**
  * Gestión del administrador: promociones, matrícula (individual y por CSV), edición, estado de
@@ -633,6 +634,17 @@ router.get('/actions', async (req, res) => {
   } catch (err) {
     console.error('Error fetching admin actions:', err);
     res.status(500).json({ error: 'Error al consultar la bitácora de acciones.' });
+  }
+});
+
+// GET /api/admin/launch-readiness — qué falta para el lanzamiento: videos y minijuegos sin
+// publicar y tamaño del banco de preguntas (services/launchReadiness.js)
+router.get('/launch-readiness', async (req, res) => {
+  try {
+    res.json({ success: true, ...(await getLaunchReadiness()) });
+  } catch (err) {
+    console.error('Error checking launch readiness:', err);
+    res.status(500).json({ error: 'Error al revisar la preparación del lanzamiento.' });
   }
 });
 

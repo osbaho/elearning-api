@@ -7,6 +7,7 @@ import { TOTAL_COURSE_STEPS, countCompletedCourseSteps, isPracticeStep } from '.
 import { MAX_RESERVE_POINTS, clampToReserveCap } from '../config/reservePoints.js';
 // (E-3) intentos, (E-4) costo del comodín fijado en el servidor — nunca del cliente
 import { WILDCARD_COST, MAX_EXAM_ATTEMPTS, EXAM_QUESTION_COUNT, isExamPassingScore } from '../config/examRules.js';
+import { pickExamQuestionIds, parseQuestionIds } from '../services/examQuestions.js';
 
 const router = express.Router();
 
@@ -29,23 +30,13 @@ async function getQuestionBank() {
   return cachedQuestions;
 }
 
-function pickRandomQuestionIds(bank, count) {
-  const ids = bank.map(q => q.id);
-  // Fisher-Yates
-  for (let i = ids.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [ids[i], ids[j]] = [ids[j], ids[i]];
-  }
-  return ids.slice(0, count);
-}
-
-function parseQuestionIds(value) {
-  try {
-    const ids = JSON.parse(value);
-    return Array.isArray(ids) && ids.length > 0 && ids.every(Number.isInteger) ? ids : null;
-  } catch {
-    return null;
-  }
+/** Preguntas que el estudiante vio en sus intentos anteriores, del más antiguo al más reciente. */
+async function previousAttemptQuestionIds(studentId, db = { all }) {
+  const rows = await db.all(
+    'SELECT question_ids FROM exam_attempts WHERE student_id = ? ORDER BY attempt_number',
+    [studentId]
+  );
+  return rows.map(r => parseQuestionIds(r.question_ids)).filter(Boolean);
 }
 
 /** C-3: en producción el examen exige la malla completa. Devuelve el mensaje de bloqueo o null. */
@@ -313,6 +304,11 @@ router.post('/submit-exam', authenticateToken, requireOpenAccess, async (req, re
         'UPDATE students SET exam_score = ?, exam_in_progress = 0, exam_question_ids = NULL WHERE id = ?',
         [finalScore, studentId]
       );
+      await tx.run(
+        `UPDATE exam_attempts SET status = 'submitted', score = ?, correct_count = ?, finished_at = ?
+          WHERE student_id = ? AND status = 'in_progress'`,
+        [score, correct, new Date().toISOString(), studentId]
+      );
 
       // Registrar módulo 'exam' y certificate_code indexado ÚNICAMENTE si aprueba
       if (isExamPassingScore(finalScore)) {
@@ -368,33 +364,63 @@ router.post('/start-exam', authenticateToken, requireOpenAccess, async (req, res
     const blocked = await courseIncompleteMessage(studentId);
     if (blocked) return res.status(403).json({ error: blocked });
 
-    // E-3: Verificar límite de intentos antes de permitir un nuevo examen
-    const studentData = await get('SELECT exam_attempts FROM students WHERE id = ?', [studentId]);
-    if (studentData && studentData.exam_attempts >= MAX_EXAM_ATTEMPTS) {
-      return res.status(403).json({
-        error: `Has alcanzado el límite máximo de ${MAX_EXAM_ATTEMPTS} intentos de examen. Contacta con el administrador.`
-      });
-    }
+    const bankIds = (await getQuestionBank()).map(q => q.id);
+    const lockClause = getPgPool() ? ' FOR UPDATE' : '';
 
-    // Cada inicio consume un intento. Si ya había uno abierto (p. ej. recargó la página),
-    // conserva sus preguntas para no regalar un set nuevo.
-    const open = await getOpenAttempt(studentId);
-    const questionIds = open ? open.questionIds : pickRandomQuestionIds(await getQuestionBank(), EXAM_QUESTION_COUNT);
-    if (questionIds.length === 0) {
-      return res.status(503).json({ error: 'El banco de preguntas está vacío. Contacta con el administrador.' });
-    }
+    const started = await withTransaction(async (tx) => {
+      // Fila del estudiante bloqueada (PostgreSQL): dos inicios simultáneos no consumen el mismo
+      // intento ni superan el límite
+      const studentData = await tx.get(`SELECT exam_attempts FROM students WHERE id = ?${lockClause}`, [studentId]);
+      // E-3: límite de intentos
+      if (studentData && studentData.exam_attempts >= MAX_EXAM_ATTEMPTS) {
+        const err = new Error(`Has alcanzado el límite máximo de ${MAX_EXAM_ATTEMPTS} intentos de examen. Contacta con el administrador.`);
+        err.statusCode = 403;
+        throw err;
+      }
 
-    await run(
-      'UPDATE students SET exam_attempts = exam_attempts + 1, exam_in_progress = 1, exam_question_ids = ? WHERE id = ?',
-      [JSON.stringify(questionIds), studentId]
-    );
-    await run(
-      'INSERT INTO exam_logs (student_id, event_type, detail) VALUES (?, ?, ?)',
-      [studentId, 'EXAM_STARTED', `Started exam attempt (${questionIds.length} preguntas)`]
-    );
-    const attemptsUsed = (studentData?.exam_attempts || 0) + 1;
-    res.json({ success: true, questionCount: questionIds.length, attemptsUsed, maxAttempts: MAX_EXAM_ATTEMPTS });
+      // Cada inicio consume un intento. Si ya había uno abierto (p. ej. recargó la página),
+      // conserva sus preguntas para no regalar un set nuevo. Si no, elige preguntas que el
+      // estudiante no haya visto en intentos anteriores.
+      const open = await getOpenAttempt(studentId, tx);
+      const questionIds = open
+        ? open.questionIds
+        : pickExamQuestionIds(bankIds, await previousAttemptQuestionIds(studentId, tx), EXAM_QUESTION_COUNT);
+      if (questionIds.length === 0) {
+        const err = new Error('El banco de preguntas está vacío. Contacta con el administrador.');
+        err.statusCode = 503;
+        throw err;
+      }
+
+      const nowIso = new Date().toISOString();
+      await tx.run(
+        'UPDATE students SET exam_attempts = exam_attempts + 1, exam_in_progress = 1, exam_question_ids = ? WHERE id = ?',
+        [JSON.stringify(questionIds), studentId]
+      );
+      // El intento abierto que se reinicia queda en el historial como abandonado
+      await tx.run(
+        `UPDATE exam_attempts SET status = 'abandoned', finished_at = ? WHERE student_id = ? AND status = 'in_progress'`,
+        [nowIso, studentId]
+      );
+      const last = await tx.get(
+        'SELECT COALESCE(MAX(attempt_number), 0) AS n FROM exam_attempts WHERE student_id = ?',
+        [studentId]
+      );
+      await tx.run(
+        `INSERT INTO exam_attempts (student_id, attempt_number, question_ids, question_count, status, started_at)
+         VALUES (?, ?, ?, ?, 'in_progress', ?)`,
+        [studentId, Number(last?.n || 0) + 1, JSON.stringify(questionIds), questionIds.length, nowIso]
+      );
+      await tx.run(
+        'INSERT INTO exam_logs (student_id, event_type, detail) VALUES (?, ?, ?)',
+        [studentId, 'EXAM_STARTED', `Started exam attempt (${questionIds.length} preguntas)`]
+      );
+      return { questionCount: questionIds.length, attemptsUsed: (studentData?.exam_attempts || 0) + 1 };
+    });
+    res.json({ success: true, ...started, maxAttempts: MAX_EXAM_ATTEMPTS });
   } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

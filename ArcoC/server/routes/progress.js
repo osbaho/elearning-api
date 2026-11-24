@@ -2,8 +2,7 @@ import express from 'express';
 import { run, get } from '../config/db.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { requireOpenAccess } from '../services/access.js';
-import { isCourseStep, isVideoStep, minWatchSecondsFor, previousStepOf } from '../config/curriculum.js';
-import { getSimulatorEntry } from '../config/simulatorCatalog.js';
+import { isCourseStep, isPracticeStep, isVideoStep, minWatchSecondsFor, previousStepOf } from '../config/curriculum.js';
 
 const router = express.Router();
 
@@ -89,8 +88,9 @@ router.post('/:moduleId', authenticateToken, requireOpenAccess, async (req, res)
       }
     }
 
-    // Los minijuegos con contenido en el simulador exigen al menos una partida terminada
-    if (getSimulatorEntry(moduleId)) {
+    // Todo minijuego exige al menos una partida terminada. Uno pendiente (sin escena en el build)
+    // no admite partidas en producción, así que ahí no se puede finalizar ni pasar de largo.
+    if (isPracticeStep(moduleId)) {
       const played = await get(
         `SELECT id FROM simulator_attempts WHERE student_id = ? AND step_id = ? AND status = 'completed' LIMIT 1`,
         [studentId, moduleId]
