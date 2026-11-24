@@ -1,5 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// Reutilizar los servidores que ya estén corriendo agiliza el desarrollo, pero esos servidores
+// usan la base de desarrollo (SQLite). En CI y al probar contra PostgreSQL (DATABASE_URL,
+// npm run test:pg) siempre se levantan servidores nuevos con el entorno de la prueba.
+const reuseExistingServer = !process.env.CI && !process.env.DATABASE_URL;
+
 export default defineConfig({
   testDir: './tests/e2e',
   timeout: 45000,
@@ -28,7 +33,7 @@ export default defineConfig({
     {
       command: 'node server.js',
       url: 'http://localhost:5000/api/health',
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer,
       stdout: 'pipe',
       stderr: 'pipe',
       timeout: 30000,
@@ -36,7 +41,7 @@ export default defineConfig({
     {
       command: 'npm --workspace=client run dev',
       url: 'http://localhost:3000',
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer,
       stdout: 'pipe',
       stderr: 'pipe',
       timeout: 45000,

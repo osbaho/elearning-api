@@ -2,6 +2,8 @@ import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 import crypto from 'crypto';
 import { get, all } from '../config/db.js';
+import { TOTAL_COURSE_STEPS, countCompletedCourseSteps } from '../config/curriculum.js';
+import { EXAM_PASS_SCORE_PERCENT, isExamPassingScore } from '../config/examRules.js';
 
 /**
  * Genera el Acta Oficial Colectiva de Acreditación y Libro de Calificaciones IES (PDF)
@@ -36,14 +38,17 @@ export async function generateCohortActaPDF(cohortName, res) {
   `, studentIds);
 
   const certMap = {};
-  const stepsMap = {};
+  const modulesByStudent = {};
   for (const p of progressRows) {
     if (p.module_id === 'exam' && p.certificate_code) {
       certMap[p.student_id] = { code: p.certificate_code, date: p.completed_at };
-    } else if (p.module_id !== 'exam') {
-      stepsMap[p.student_id] = (stepsMap[p.student_id] || 0) + 1;
     }
+    (modulesByStudent[p.student_id] ||= []).push(p.module_id);
   }
+  // Solo cuentan los pasos de la malla vigente (curriculum.js)
+  const stepsMap = Object.fromEntries(
+    Object.entries(modulesByStudent).map(([studentId, moduleIds]) => [studentId, countCompletedCourseSteps(moduleIds)])
+  );
 
   // 3. Consultar si la promoción está cerrada / sellada
   const closure = await get(`
@@ -55,8 +60,7 @@ export async function generateCohortActaPDF(cohortName, res) {
   // Clasificar graduados (que cumplen el 100% del estándar)
   const graduates = students.filter(s => {
     const steps = stepsMap[s.id] || 0;
-    const score = s.exam_score ?? 0;
-    return score >= 90 && steps >= 25 && !!s.is_onboarded;
+    return isExamPassingScore(s.exam_score) && steps >= TOTAL_COURSE_STEPS && !!s.is_onboarded;
   });
 
   const totalEnrolled = students.length;
@@ -184,7 +188,7 @@ export async function generateCohortActaPDF(cohortName, res) {
 
   doc.fillColor('#475569').font('Helvetica').fontSize(7.5)
      .text(
-       'Por medio de la presente acta se hace constar que los profesionales arriba relacionados han cumplido a cabalidad con la totalidad de los requisitos curriculares (25 pasos formativos), prácticas cinemáticas en simulador interactivo y evaluación final reglamentaria bajo supervisión biométrica continuada (proctoring con IA), obteniendo un puntaje igual o superior al 90%. Se confiere el AVAL INSTITUCIONAL formal para la operación clínica segura de equipos emisores de radiación ionizante tipo Arco en C.',
+       `Por medio de la presente acta se hace constar que los profesionales arriba relacionados han cumplido a cabalidad con la totalidad de los requisitos curriculares (${TOTAL_COURSE_STEPS} pasos formativos), prácticas cinemáticas en simulador interactivo y evaluación final reglamentaria bajo supervisión biométrica continuada (proctoring con IA), obteniendo un puntaje igual o superior al ${EXAM_PASS_SCORE_PERCENT}%. Se confiere el AVAL INSTITUCIONAL formal para la operación clínica segura de equipos emisores de radiación ionizante tipo Arco en C.`,
        48, legalY + 18, { width: width - 96, align: 'justify' }
      );
 

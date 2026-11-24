@@ -10,7 +10,7 @@ import * as cookie from 'cookie';
 
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
-import { initDb, run, get, saveDb, getPgPool } from './server/config/db.js';
+import { initDb, run, get, closeDb, getPgPool, getSchemaVersion } from './server/config/db.js';
 import { globalLimiter } from './server/middleware/rateLimiter.js';
 
 import authRoutes from './server/routes/auth.js';
@@ -65,7 +65,10 @@ app.get(['/health', '/api/health'], (req, res) => {
     status: 'healthy',
     uptime: Math.round(process.uptime()),
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    database: getPgPool() ? 'postgresql' : 'sqlite',
+    // Última migración aplicada: permite comprobar tras un despliegue que el esquema está al día
+    schemaVersion: getSchemaVersion()
   });
 });
 
@@ -138,75 +141,76 @@ if (process.env.NODE_ENV !== 'production') {
         await run('UPDATE students SET password = ? WHERE email = ?', [hash, 'admin@admin.com']);
         return res.json({ success: true, email: 'admin@admin.com' });
       }
-      const student = await get('SELECT id, face_descriptor, email FROM students WHERE email = ?', [email]);
-      if (student) {
-        const isOnboarded = req.body?.is_onboarded !== undefined ? (req.body.is_onboarded ? 1 : 0) : 1;
-        const defaultDescriptor = JSON.stringify(Array(128).fill(0.05));
-        const faceDesc = isOnboarded === 1 ? (student.face_descriptor || defaultDescriptor) : null;
-        const reservePoints = req.body?.reserve_points !== undefined ? req.body.reserve_points : 150;
-        const examAttempts = req.body?.exam_attempts !== undefined ? req.body.exam_attempts : 0;
-        const examScore = req.body?.exam_score !== undefined ? req.body.exam_score : null;
+      let student = await get('SELECT id, face_descriptor, email FROM students WHERE email = ?', [email]);
 
+      // Si el estudiante no existe, se crea y recibe el mismo reinicio que uno existente: el estado final
+      // no depende de si ya estaba en la BD, así que una BD nueva pasa la suite a la primera. Las pruebas
+      // de onboarding y de estudiante nuevo lo piden explícitamente (is_onboarded: 0, reserve_points: 0).
+      const created = !student;
+      if (created) {
+        const passwordToSet = req.body?.password || 'student123';
+        const salt = await bcrypt.genSalt(10);
+        const hash = await bcrypt.hash(passwordToSet, salt);
+        const nameToSet = req.body?.name || 'Dr. Nuevo Estudiante';
+        const usernameToSet = req.body?.username || email.split('@')[0];
         await run(
-          'UPDATE students SET exam_score = ?, exam_attempts = ?, reserve_points = ?, is_onboarded = ?, face_descriptor = ?, proctoring_incidents = 0, focus_violations = 0, exam_in_progress = 0, exam_question_ids = NULL WHERE id = ?',
-          [examScore, examAttempts, reservePoints, isOnboarded, faceDesc, student.id]
+          `INSERT INTO students (name, username, password, email, role) VALUES (?, ?, ?, ?, 'student')`,
+          [nameToSet, usernameToSet, hash, email]
         );
-        if (typeof req.body?.name === 'string' && req.body.name.trim()) {
-          await run('UPDATE students SET name = ? WHERE id = ?', [req.body.name.trim(), student.id]);
-        }
-        if (req.body?.id_number) {
-          await run('UPDATE students SET id_number = ?, institution = ?, cohort = ? WHERE id = ?', [
-            req.body.id_number,
-            req.body.institution || 'Hospital Universitario',
-            req.body.cohort || 'Promoción 1',
-            student.id
-          ]);
-        }
-        await run('DELETE FROM course_progress WHERE student_id = ?', [student.id]);
-        await run('DELETE FROM exam_logs WHERE student_id = ?', [student.id]);
-        await run('DELETE FROM simulator_attempts WHERE student_id = ?', [student.id]);
-        await run('DELETE FROM video_views WHERE student_id = ?', [student.id]);
-
-        // Opcional para pruebas: marcar curso completo
-        if (req.body?.complete_course) {
-          for (const step of COURSE_STEPS) {
-            await run('INSERT OR IGNORE INTO course_progress (student_id, module_id, status) VALUES (?, ?, ?)', [student.id, step, 'completed']);
-          }
-        }
-
-        // Opcional para pruebas: marcar examen aprobado
-        if (req.body?.pass_exam) {
-          const finalScore = req.body?.exam_score !== undefined ? req.body.exam_score : 95;
-          const nowIso = new Date().toISOString();
-          const { calculateVerificationCode } = await import('./server/utils/certificate.js');
-          const certCode = calculateVerificationCode(student.id, student.email, finalScore, nowIso);
-          await run(`
-            INSERT INTO course_progress (student_id, module_id, status, completed_at, certificate_code)
-            VALUES (?, 'exam', 'completed', ?, ?)
-          `, [student.id, nowIso, certCode]);
-          await run('UPDATE students SET exam_score = ? WHERE id = ?', [finalScore, student.id]);
-        }
-
-        return res.json({ success: true, studentId: student.id });
+        student = await get('SELECT id, face_descriptor, email FROM students WHERE email = ?', [email]);
       }
 
-      // Si el estudiante no existe, crearlo para pruebas de onboarding y estudiante nuevo
-      const passwordToSet = req.body?.password || 'student123';
-      const salt = await bcrypt.genSalt(10);
-      const hash = await bcrypt.hash(passwordToSet, salt);
-      const nameToSet = req.body?.name || 'Dr. Nuevo Estudiante';
-      const usernameToSet = req.body?.username || email.split('@')[0];
-      const reservePoints = req.body?.reserve_points !== undefined ? req.body.reserve_points : 0;
-      const isOnboarded = req.body?.is_onboarded !== undefined ? (req.body.is_onboarded ? 1 : 0) : 0;
+      const isOnboarded = req.body?.is_onboarded !== undefined ? (req.body.is_onboarded ? 1 : 0) : 1;
       const defaultDescriptor = JSON.stringify(Array(128).fill(0.05));
-      const faceDesc = isOnboarded === 1 ? defaultDescriptor : null;
+      const faceDesc = isOnboarded === 1 ? (student.face_descriptor || defaultDescriptor) : null;
+      const reservePoints = req.body?.reserve_points !== undefined ? req.body.reserve_points : 150;
+      const examAttempts = req.body?.exam_attempts !== undefined ? req.body.exam_attempts : 0;
+      const examScore = req.body?.exam_score !== undefined ? req.body.exam_score : null;
 
       await run(
-        `INSERT INTO students (name, username, password, email, role, reserve_points, is_onboarded, face_descriptor) VALUES (?, ?, ?, ?, 'student', ?, ?, ?)`,
-        [nameToSet, usernameToSet, hash, email, reservePoints, isOnboarded, faceDesc]
+        'UPDATE students SET exam_score = ?, exam_attempts = ?, reserve_points = ?, is_onboarded = ?, face_descriptor = ?, proctoring_incidents = 0, focus_violations = 0, exam_in_progress = 0, exam_question_ids = NULL WHERE id = ?',
+        [examScore, examAttempts, reservePoints, isOnboarded, faceDesc, student.id]
       );
-      const created = await get('SELECT id, face_descriptor, email FROM students WHERE email = ?', [email]);
-      return res.json({ success: true, studentId: created.id, created: true });
+      if (typeof req.body?.name === 'string' && req.body.name.trim()) {
+        await run('UPDATE students SET name = ? WHERE id = ?', [req.body.name.trim(), student.id]);
+      }
+      if (req.body?.id_number) {
+        await run('UPDATE students SET id_number = ?, institution = ?, cohort = ? WHERE id = ?', [
+          req.body.id_number,
+          req.body.institution || 'Hospital Universitario',
+          req.body.cohort || 'Promoción 1',
+          student.id
+        ]);
+      }
+      await run('DELETE FROM course_progress WHERE student_id = ?', [student.id]);
+      await run('DELETE FROM exam_logs WHERE student_id = ?', [student.id]);
+      await run('DELETE FROM simulator_attempts WHERE student_id = ?', [student.id]);
+      await run('DELETE FROM video_views WHERE student_id = ?', [student.id]);
+
+      // Opcional para pruebas: marcar curso completo
+      if (req.body?.complete_course) {
+        for (const step of COURSE_STEPS) {
+          await run(
+            'INSERT INTO course_progress (student_id, module_id, status) VALUES (?, ?, ?) ON CONFLICT (student_id, module_id) DO NOTHING',
+            [student.id, step, 'completed']
+          );
+        }
+      }
+
+      // Opcional para pruebas: marcar examen aprobado
+      if (req.body?.pass_exam) {
+        const finalScore = req.body?.exam_score !== undefined ? req.body.exam_score : 95;
+        const nowIso = new Date().toISOString();
+        const { calculateVerificationCode } = await import('./server/utils/certificate.js');
+        const certCode = calculateVerificationCode(student.id, student.email, finalScore, nowIso);
+        await run(`
+          INSERT INTO course_progress (student_id, module_id, status, completed_at, certificate_code)
+          VALUES (?, 'exam', 'completed', ?, ?)
+        `, [student.id, nowIso, certCode]);
+        await run('UPDATE students SET exam_score = ? WHERE id = ?', [finalScore, student.id]);
+      }
+
+      return res.json({ success: true, studentId: student.id, ...(created ? { created: true } : {}) });
     } catch (err) {
       console.error('Error in test-reset:', err);
       res.status(500).json({ error: err.message });
@@ -360,19 +364,12 @@ function gracefulShutdown(signal) {
   if (runningServer) {
     runningServer.close(() => {
       console.log('✅ HTTP server closed.');
-      const pgPool = getPgPool();
-      if (pgPool) {
-        pgPool.end(() => {
-          console.log('✅ PostgreSQL pool closed.');
-          process.exit(0);
-        });
-      } else {
-        // Persist SQLite to disk before exiting (M-01)
-        saveDb().then(() => {
-          console.log('✅ SQLite database saved to disk.');
-          process.exit(0);
-        }).catch(() => process.exit(0));
-      }
+      const engine = getPgPool() ? 'PostgreSQL pool closed' : 'SQLite database saved to disk';
+      // M-01: cierra el pool de PostgreSQL o escribe SQLite en disco antes de salir
+      closeDb()
+        .then(() => console.log(`✅ ${engine}.`))
+        .catch((err) => console.error('❌ Error closing database:', err))
+        .finally(() => process.exit(0));
     });
   } else {
     process.exit(0);

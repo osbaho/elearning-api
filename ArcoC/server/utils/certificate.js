@@ -2,6 +2,7 @@ import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 import crypto from 'crypto';
 import { get, all, run } from '../config/db.js';
+import { EXAM_PASS_SCORE_PERCENT, isExamPassingScore } from '../config/examRules.js';
 
 /**
  * Generates and streams a certificate PDF for a given student
@@ -17,19 +18,19 @@ export async function generateCertificatePDF(studentId, res) {
     return res.status(404).json({ error: 'Estudiante no encontrado.' });
   }
 
-  const progress = await all(
-    'SELECT module_id, completed_at FROM course_progress WHERE student_id = ? AND status = ?',
-    [studentId, 'completed']
+  const examRecord = await get(
+    `SELECT id, completed_at, certificate_code FROM course_progress
+     WHERE student_id = ? AND module_id = 'exam' AND status = 'completed'`,
+    [studentId]
   );
-  const examRecord = progress.find(p => p.module_id === 'exam');
 
   if (!examRecord) {
     return res.status(400).json({ error: 'El estudiante no ha completado el examen final.' });
   }
 
   const score = student.exam_score ?? 0;
-  if (score < 90) {
-    return res.status(400).json({ error: 'El estudiante debe aprobar la evaluación final con un puntaje mínimo de 90% para obtener su certificado.' });
+  if (!isExamPassingScore(student.exam_score)) {
+    return res.status(400).json({ error: `El estudiante debe aprobar la evaluación final con un puntaje mínimo de ${EXAM_PASS_SCORE_PERCENT}% para obtener su certificado.` });
   }
 
   const completedDate = examRecord.completed_at ? new Date(examRecord.completed_at) : new Date();
@@ -39,13 +40,22 @@ export async function generateCertificatePDF(studentId, res) {
     day: 'numeric'
   });
 
-  const hashInput = `${student.id}-${student.email}-${student.exam_score}-${examRecord.completed_at}`;
-  const verificationCode = 'CARM-' + crypto.createHash('sha256').update(hashInput).digest('hex').substring(0, 12).toUpperCase();
+  // El código impreso (y en el QR) es el que quedó guardado al aprobar: es el que valida
+  // /api/verify. No se recalcula, porque la fecha guardada no vuelve en el mismo formato en
+  // todos los motores (en PostgreSQL llega como Date) y el resultado no coincidiría.
+  // Los registros antiguos sin código lo calculan una vez y lo guardan.
+  let verificationCode = examRecord.certificate_code;
+  if (!verificationCode) {
+    verificationCode = calculateVerificationCode(student.id, student.email, student.exam_score, examRecord.completed_at);
+    await run('UPDATE course_progress SET certificate_code = ? WHERE id = ?', [verificationCode, examRecord.id]);
+  }
 
   try {
     const doc = new PDFDocument({ size: 'LETTER', layout: 'landscape', margin: 40 });
 
     res.setHeader('Content-Type', 'application/pdf');
+    // Permite comprobar (admin, pruebas) que el código del PDF es el que valida /api/verify
+    res.setHeader('X-Verification-Code', verificationCode);
     const safeName = (student.name || 'Estudiante').replace(/[^a-zA-Z0-9]/g, '_');
     res.setHeader('Content-Disposition', `attachment; filename=Certificado_CArmMaster_${safeName}.pdf`);
 
@@ -190,8 +200,8 @@ export async function verifyCertificateCode(code) {
     SELECT s.id, s.name, s.email, s.exam_score, s.id_number, s.id_type, s.institution, cp.completed_at
     FROM course_progress cp
     JOIN students s ON s.id = cp.student_id
-    WHERE cp.module_id = 'exam' AND cp.status = 'completed' AND cp.certificate_code = ? AND s.exam_score >= 90
-  `, [cleanCode]);
+    WHERE cp.module_id = 'exam' AND cp.status = 'completed' AND cp.certificate_code = ? AND s.exam_score >= ?
+  `, [cleanCode, EXAM_PASS_SCORE_PERCENT]);
 
   if (fastMatch) {
     const maskedId = fastMatch.id_number 
@@ -215,8 +225,8 @@ export async function verifyCertificateCode(code) {
     SELECT s.id, s.name, s.email, s.exam_score, s.id_number, s.id_type, s.institution, cp.id as progress_id, cp.completed_at
     FROM students s
     JOIN course_progress cp ON cp.student_id = s.id
-    WHERE cp.module_id = 'exam' AND cp.status = 'completed' AND s.exam_score >= 90 AND (cp.certificate_code IS NULL OR cp.certificate_code = '')
-  `);
+    WHERE cp.module_id = 'exam' AND cp.status = 'completed' AND s.exam_score >= ? AND (cp.certificate_code IS NULL OR cp.certificate_code = '')
+  `, [EXAM_PASS_SCORE_PERCENT]);
 
   for (const row of records) {
     const generatedCode = calculateVerificationCode(row.id, row.email, row.exam_score, row.completed_at);

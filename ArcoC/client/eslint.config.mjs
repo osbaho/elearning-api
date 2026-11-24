@@ -10,6 +10,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // public/ no es código fuente del proyecto: build WebGL que genera Unity (no se versiona)
+    // y bundles minificados de terceros (p. ej. workers/face-api.min.js).
+    "public/webgl/**",
+    "public/**/*.min.js",
   ]),
   {
     rules: {

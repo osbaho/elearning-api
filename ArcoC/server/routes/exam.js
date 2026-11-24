@@ -4,13 +4,12 @@ import { authenticateToken } from '../middleware/auth.js';
 import { generateCertificatePDF, verifyCertificateCode, calculateVerificationCode } from '../utils/certificate.js';
 import { TOTAL_COURSE_STEPS, countCompletedCourseSteps, isPracticeStep } from '../config/curriculum.js';
 import { MAX_RESERVE_POINTS, clampToReserveCap } from '../config/reservePoints.js';
+// (E-3) intentos, (E-4) costo del comodín fijado en el servidor — nunca del cliente
+import { WILDCARD_COST, MAX_EXAM_ATTEMPTS, EXAM_QUESTION_COUNT, isExamPassingScore } from '../config/examRules.js';
 
 const router = express.Router();
 
 // ─── Constantes de negocio ────────────────────────────────────────────────────
-const WILDCARD_COST = 100;          // (E-4) Costo fijo en servidor — nunca del cliente
-const MAX_EXAM_ATTEMPTS = 3;        // (E-3) Máximo intentos de examen
-const EXAM_QUESTION_COUNT = 10;     // Preguntas por intento (o todas, si el banco tiene menos)
 const VALID_ANSWERS = ['a', 'b', 'c', 'd'];
 const NO_OPEN_ATTEMPT = 'No tienes un intento de examen en curso. Inicia el examen desde la plataforma.';
 
@@ -314,8 +313,8 @@ router.post('/submit-exam', authenticateToken, async (req, res) => {
         [finalScore, studentId]
       );
 
-      // Registrar módulo 'exam' y certificate_code indexado ÚNICAMENTE si aprueba con >= 90%
-      if (finalScore >= 90) {
+      // Registrar módulo 'exam' y certificate_code indexado ÚNICAMENTE si aprueba
+      if (isExamPassingScore(finalScore)) {
         const studentRow = await tx.get('SELECT email FROM students WHERE id = ?', [studentId]);
         const email = studentRow?.email || '';
         const nowIso = new Date().toISOString();

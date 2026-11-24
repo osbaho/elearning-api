@@ -52,7 +52,9 @@ test.describe('Student Single-Sitting Complete Journey (UI/UX & Logic)', () => {
 
     // 3. Redirección automática obligatoria a Onboarding
     await page.waitForURL('**/onboarding', { timeout: 15000 });
-    await expect(page.locator('h1')).toContainText('Comencemos');
+    // Con `next dev` en frío, esta es la primera visita a /onboarding: Next compila la página
+    // (con face-api.js) y mientras tanto muestra su loading.js. Mismo margen que la redirección.
+    await expect(page.locator('h1')).toContainText('Comencemos', { timeout: 15000 });
     await saveScreenshot(page, '02-onboarding-step1-profile.png');
 
     // 4. Completar Paso 1: Datos Institucionales y Habeas Data

@@ -24,6 +24,8 @@ export default function AdminPage() {
   const router = useRouter();
 
   const [students, setStudents] = useState([]);
+  // Momento en que se cargó la lista: referencia del cálculo de rezago (el render no lee el reloj)
+  const [studentsLoadedAt, setStudentsLoadedAt] = useState(null);
   const [cohorts, setCohorts] = useState([]);
   const [selectedCohort, setSelectedCohort] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -55,12 +57,12 @@ export default function AdminPage() {
   const [emailLogs, setEmailLogs] = useState([]);
   const [emailLogsLoading, setEmailLogsLoading] = useState(false);
 
-  const fetchCohortsAndStudents = useCallback(async (cohort = selectedCohort, search = searchQuery) => {
-    try {
+  const fetchCohortsAndStudents = useCallback((cohort = selectedCohort, search = searchQuery) => {
+    const request = async () => {
       const cohortParam = cohort !== 'all' ? `&cohort=${encodeURIComponent(cohort)}` : '';
       const searchParam = search ? `&search=${encodeURIComponent(search)}` : '';
-      
-      const [resStudents, resCohorts] = await Promise.all([
+
+      return Promise.all([
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/students?limit=100${cohortParam}${searchParam}`, {
           credentials: 'include'
         }),
@@ -68,24 +70,32 @@ export default function AdminPage() {
           credentials: 'include'
         })
       ]);
+    };
 
-      if (resStudents.ok) {
-        const data = await resStudents.json();
-        setStudents(data.students || []);
-      } else {
-        setError('No se pudieron cargar los estudiantes.');
-      }
+    // El estado cambia solo en los callbacks, cuando responde la API: el efecto que carga el panel
+    // puede invocarla sin llamar a setState de forma síncrona (react-hooks/set-state-in-effect).
+    return request()
+      .then(async ([resStudents, resCohorts]) => {
+        if (resStudents.ok) {
+          const data = await resStudents.json();
+          setStudents(data.students || []);
+          setStudentsLoadedAt(Date.now());
+        } else {
+          setError('No se pudieron cargar los estudiantes.');
+        }
 
-      if (resCohorts.ok) {
-        const cohortData = await resCohorts.json();
-        setCohorts(cohortData.cohorts || []);
-      }
-    } catch (err) {
-      console.error(err);
-      setError('Error de conexión con el servidor.');
-    } finally {
-      setLoading(false);
-    }
+        if (resCohorts.ok) {
+          const cohortData = await resCohorts.json();
+          setCohorts(cohortData.cohorts || []);
+        }
+      })
+      .catch((err) => {
+        console.error(err);
+        setError('Error de conexión con el servidor.');
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   }, [selectedCohort, searchQuery]);
 
   useEffect(() => {
@@ -229,11 +239,11 @@ export default function AdminPage() {
     }
   };
 
-  // Cálculo de rezago académico (más de 7 días sin avance significativo)
+  // Cálculo de rezago académico (más de 7 días sin avance significativo), a la fecha de carga de la lista
   const isStudentLagging = (student) => {
     if (student.role === 'admin' || (student.examScore ?? 0) >= 90) return false;
     const dateRef = student.startDate ? new Date(student.startDate) : new Date(student.createdAt);
-    const diffDays = Math.floor((Date.now() - dateRef.getTime()) / (1000 * 60 * 60 * 24));
+    const diffDays = Math.floor((studentsLoadedAt - dateRef.getTime()) / (1000 * 60 * 60 * 24));
     const completedCount = (student.completedModules || []).filter(m => m !== 'exam').length;
     return diffDays >= 7 && completedCount < 5;
   };
@@ -587,7 +597,7 @@ export default function AdminPage() {
               const passed = score >= 90;
               const docText = s.idNumber ? `${s.idType || 'CC'} ${s.idNumber}` : 'Sin datos';
               const instText = s.institution || 'Sin asignar';
-              const isCompliant = passed && modules.filter(m => m !== 'exam').length >= 25 && s.isOnboarded;
+              const isCompliant = passed && ALL_STEPS.every(k => modules.includes(k)) && s.isOnboarded;
               const lagging = isStudentLagging(s);
 
               return (

@@ -81,6 +81,7 @@ ArcoC/
 ├── docker-compose.yml             # Orquestación de contenedores
 ├── Dockerfile.backend             # Imagen de producción Express
 ├── Dockerfile.frontend            # Imagen de producción Next.js
+├── .dockerignore                  # Lo que no entra al contexto de build de Docker
 ├── playwright.config.js           # Configuración de pruebas E2E
 ├── .env.example                   # Plantilla de variables de entorno backend
 │
@@ -93,12 +94,15 @@ ArcoC/
 │
 ├── scripts/
 │   ├── enrich_lecturas_with_images.py # Script de automatización de inyección de imágenes clínicas
-│   └── prepare-module-videos.ps1  # Masters de un módulo → videos web (H.264 ~4 Mbps, faststart)
+│   ├── prepare-module-videos.ps1  # Masters de un módulo → videos web (H.264 ~4 Mbps, faststart)
+│   └── pg-test/                   # PostgreSQL 16 desechable para la suite E2E (npm run test:pg)
 │
 ├── server/
 │   ├── config/
-│   │   ├── db.js                  # Abstracción dual SQLite/PostgreSQL y migraciones
+│   │   ├── db.js                  # Abstracción dual SQLite/PostgreSQL y ejecución de migraciones
+│   │   ├── migrations.js          # Migraciones versionadas del esquema (tabla schema_migrations)
 │   │   ├── curriculum.js          # Malla de 26 pasos: fuente única de verdad del servidor
+│   │   ├── examRules.js           # Reglas del examen: preguntas por intento, nota mínima, intentos, comodín
 │   │   ├── simulatorCatalog.js    # Paso práctico → escena y fase del simulador Unity
 │   │   └── reservePoints.js       # Regla 10/5/0 por fase y techo de 500 Puntos de Reserva
 │   ├── middleware/
@@ -112,7 +116,10 @@ ArcoC/
 │   │   └── admin.js               # Dashboard de auditoría IES y descarga de constancias
 │   ├── utils/
 │   │   ├── certificate.js         # Generación de PDF (PDFKit) y validación pública
+│   │   ├── cohortActa.js          # Acta colectiva y libro de calificaciones por promoción (PDF)
 │   │   └── crypto.js              # Cifrado autenticado AES-256-GCM para biometría
+│   ├── services/
+│   │   └── emailService.js        # Correos de inducción y recordatorio (registrados en email_logs)
 │   └── scripts/
 │       ├── seed.js                # Inicialización de cuenta de Administrador
 │       ├── seed_50_questions.js   # Banco oficial de 50 preguntas médicas (actualizado a 2026/ACHS)
@@ -156,9 +163,12 @@ ArcoC/
 │
 └── tests/
     ├── helpers/
-    │   └── loginHelper.js         # Utilidad de login y reset para tests
-    └── e2e/                       # 8 suites de pruebas Playwright automatizadas (15 tests)
+    │   ├── loginHelper.js         # Utilidad de login y reset para tests
+    │   └── simulatorHelper.js     # Partidas del simulador y avance de pasos vía API
+    └── e2e/                       # 22 suites Playwright (ver sección 13)
 ```
+
+En la raíz del monorepo, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) corre el lint del cliente y la suite E2E sobre SQLite y PostgreSQL (ver sección 13).
 
 ---
 
@@ -166,7 +176,22 @@ ArcoC/
 
 La capa de datos ([`server/config/db.js`](file:///c:/Oscar/ArcoC/server/config/db.js)) implementa un wrapper agnóstico que permite alternar entre:
 1. **SQLite (`sql.js`):** Utilizado por defecto en desarrollo local. Se carga en memoria para velocidad ultra-rápida y persiste automáticamente a `database.sqlite` mediante debounce y en el evento de *graceful shutdown*.
-2. **PostgreSQL (`pg`):** Habilitado automáticamente cuando se define la variable `DATABASE_URL`. El conversor `convertSqlForPg` traduce dinámicamente placeholders (`?` a `$1, $2...`) y sintaxis de conflictos (`INSERT OR IGNORE` a `ON CONFLICT DO NOTHING`).
+2. **PostgreSQL (`pg`):** Habilitado automáticamente cuando se define la variable `DATABASE_URL`. El conversor `convertSqlForPg` traduce los placeholders (`?` a `$1, $2...`); el resto del SQL se escribe en la sintaxis común a ambos motores (por ejemplo `INSERT ... ON CONFLICT (...) DO NOTHING`, nunca `INSERT OR IGNORE`, que solo existe en SQLite).
+
+### Paridad entre SQLite y PostgreSQL
+Producción usa PostgreSQL; desarrollo, SQLite. Para que el comportamiento sea el mismo:
+* **Tipos:** `COUNT`/`SUM` (BIGINT) y `AVG`/`ROUND` (NUMERIC) llegan como números, igual que en SQLite (`types.setTypeParser` en `db.js`).
+* **Fechas en UTC:** cada conexión arranca con `TimeZone=UTC` (parámetro `options` del pool) y las columnas `TIMESTAMP` se leen como UTC, sin depender de la zona horaria del servidor Node.
+* **SQL portable:** `ROUND(x, 2)` solo existe para NUMERIC en PostgreSQL (se usa `ROUND(CAST(AVG(...) AS NUMERIC), 2)`) y toda columna no agregada debe ir en el `GROUP BY`. Estos dos casos hacían fallar `/api/admin/cohorts` en PostgreSQL.
+* **SSL:** `DATABASE_SSL` = `disable` (red interna, como el Postgres de docker-compose), `require` (verifica el certificado) o `no-verify` (cifra sin verificar; valor por defecto). Si `DATABASE_URL` trae `sslmode`, ese valor manda.
+* **Codificación UTF8:** los textos llevan tildes y emojis (asuntos y cuerpos de correo), así que la base de PostgreSQL debe ser UTF8. La imagen oficial de Docker la crea así; en Windows, `initdb` usa WIN1252 por defecto y rechaza esas filas. Al arrancar, el backend avisa en el log si la base no es UTF8.
+* **Verificación:** la suite E2E corre en ambos motores (`npm run test:pg` y CI, ver sección 13).
+
+### Migraciones versionadas ([`server/config/migrations.js`](server/config/migrations.js))
+* Al arrancar, `initDb()` aplica en orden las migraciones pendientes: cada una se ejecuta **una sola vez**, dentro de una transacción, y queda registrada en `schema_migrations`. En PostgreSQL un candado (`pg_advisory_xact_lock`) evita que dos instancias que arrancan a la vez apliquen la misma.
+* **Versión 1 (`esquema_base`)** es el esquema anterior a las migraciones. Es idempotente: en una base existente no cambia nada y solo se registra (verificado sobre una copia de la base de desarrollo: mismas filas y columnas en todas las tablas).
+* **Para cambiar el esquema** agrega una migración al final de `MIGRATIONS` con el siguiente número; nunca edites ni reordenes una publicada, porque las bases existentes no la volverían a ejecutar. Cada migración recibe `db.run/get/all`, `db.types.id/datetime`, `db.columnExists()` y `db.addColumnIfMissing()`.
+* `/api/health` informa `schemaVersion` (última migración aplicada) para confirmar tras un despliegue que el esquema está al día.
 
 ### Esquema Relacional de Tablas
 
@@ -183,6 +208,8 @@ Almacena usuarios, credenciales, estado del curso y telemetría de integridad:
 * `is_onboarded`: Indicador booleano (0 o 1)
 * `face_descriptor`: TEXT con el vector de 128 números **cifrado en AES-256-GCM**
 * `id_number`, `id_type` (CC, CE, Pasaporte), `institution`: Datos institucionales
+* `cohort`, `start_date`: Promoción y fecha habilitada de acceso (las registra el admin al matricular)
+* `exam_in_progress`, `exam_question_ids`: Intento de examen abierto y su set de preguntas
 * `created_at`: Marca temporal de creación
 
 #### 2. `course_progress`
@@ -192,11 +219,12 @@ Registra el avance individual por paso:
 * `module_id`: Identificador del paso (ej: `'m1_v1'`, `'m1_s1'`, `'exam'`)
 * `status`: `'completed'`
 * `completed_at`: Marca temporal inmutable del primer completado
+* `certificate_code`: En la fila `'exam'`, código de verificación del certificado, guardado al aprobar (indexado)
 * Restricción: `UNIQUE(student_id, module_id)`
 
 #### 3. `questions`
 Banco de preguntas de opción múltiple (50 reactivos oficiales estandarizados según normativas OIEA, ICRP 118, ACHS y AO Trauma):
-* `id` (INTEGER / SERIAL PRIMARY KEY)
+* `id` (INTEGER / SERIAL PRIMARY KEY). `npm run seed:questions` reemplaza el banco y reinicia la numeración, así que el oficial queda siempre con ids 1–50 en ambos motores (antes empezaba en 6 si la base ya tenía las 5 preguntas iniciales).
 * `category`: Categoría médica (*Física y Espectro*, *Protección y Blindaje*, *Estándares ACHS y Operación*, *Tecnología FPD e IA*, *Anatomía y Proyecciones*, *Protocolos Quirúrgicos*)
 * `text`: Enunciado de la pregunta clínica
 * `poison_text`: Texto señuelo invisible para despistar agentes de IA
@@ -210,7 +238,7 @@ Bitácora de auditoría forense del examen:
 * `student_id` (FOREIGN KEY -> students.id)
 * `event_type`: `'EXAM_STARTED'`, `'EXAM_SUBMITTED'`, `'WILDCARD_USED'`, `'POINTS_EARNED'`, `'FOCUS_LOSS'`, `'PROCTORING_WARNING'`, `'PROCTORING_SUSPENDED'`, `'PROCTORING_EXPIRED'`
 * `detail`: Descripción técnica detallada del evento
-* `timestamp`: Fecha y hora del suceso (se depuran registros con más de 30 días)
+* `timestamp`: Fecha y hora del suceso. Se conservan siempre (son evidencia para auditorías); `EXAM_LOG_RETENTION_DAYS` permite borrar los más antiguos al arrancar
 
 #### 5. `simulator_attempts`
 Una fila por partida en el simulador Unity WebGL (1 paso práctico = 1 fase = 1 partida). La crea `POST /api/simulator/attempts` y la completa el resultado de la fase:
@@ -225,6 +253,9 @@ Una fila por partida en el simulador Unity WebGL (1 paso práctico = 1 fase = 1 
 Primer inicio de reproducción de cada video por estudiante (`POST /api/progress/:id/start`). En producción es el punto desde el que se mide el tiempo mínimo de visualización:
 * `id`, `student_id`, `step_id` (ej: `'m1_v2'`), `started_at` (ISO 8601, lo fija el servidor)
 * Restricción: `UNIQUE(student_id, step_id)` (se conserva el primer inicio)
+
+#### 7. `schema_migrations`
+Migraciones aplicadas (ver *Migraciones versionadas*): `version` (PK), `name`, `applied_at`.
 
 ---
 
@@ -254,10 +285,12 @@ El programa académico consta de **5 módulos temáticos** y **26 pasos obligato
 
 **Módulos 2–5 (contenido en producción, 5 pasos cada uno):** `mX_v1` → `mX_s1` → `mX_v2` → `mX_s2` → `mX_vr`, con videos placeholder y prácticas "en desarrollo".
 
-**Fuente única de verdad:** la lista ordenada vive en [`server/config/curriculum.js`](server/config/curriculum.js) (`COURSE_STEPS`, usada por progreso, examen, admin y correos) y en [`client/src/lib/courseConfig.js`](client/src/lib/courseConfig.js) (títulos, videos e íconos). El test E2E 19 falla si ambas listas difieren. Los totales (26) se calculan; no hay constantes "25" repartidas por el código.
+**Fuente única de verdad:** la lista ordenada vive en [`server/config/curriculum.js`](server/config/curriculum.js) (`COURSE_STEPS`, usada por progreso, examen, admin y correos) y en [`client/src/lib/courseConfig.js`](client/src/lib/courseConfig.js) (títulos, videos e íconos). El test E2E 19 falla si ambas listas difieren. Los totales (26) se calculan; no hay constantes "25" repartidas por el código (tampoco en el acta, el CSV, el panel admin ni los correos).
+
+**Panel del estudiante (`/course`):** al entrar se abre el módulo del paso pendiente (el primero sin completar o, con la malla completa, el examen), con su tarjeta resaltada, y el botón **«Continuar donde quedé»** lleva hasta él. La tarjeta del examen distingue tres estados: *aprobado* (✅ con la nota), *no aprobado* (❌ con la nota y «Reintentar Examen» con los intentos restantes) y *sin intentos* (botón deshabilitado con aviso de contactar al administrador). Antes, una nota reprobatoria se mostraba como «✅ Aprobado (60%)» y deshabilitaba el examen.
 
 ### Enforce de Secuencialidad Backend
-El endpoint `POST /api/progress/:moduleId` valida en el servidor la lista ordenada `COURSE_STEPS`. Para marcar cualquier paso `n`, el paso `n-1` debe existir previamente en estado `'completed'` en `course_progress`; repetir un paso ya completado responde éxito sin cambios. Los minijuegos con contenido en el simulador exigen además **al menos una partida terminada** (`simulator_attempts` con `status = 'completed'`). El módulo `'exam'` está protegido contra marcado manual: solo el endpoint `/api/submit-exam` puede otorgarlo tras calificar formalmente con puntaje ≥ 90%. Los conteos de avance (bloqueo del examen, estándar IES, CSV, recordatorios) solo cuentan pasos de la malla vigente.
+El endpoint `POST /api/progress/:moduleId` valida en el servidor la lista ordenada `COURSE_STEPS`. Para marcar cualquier paso `n`, el paso `n-1` debe existir previamente en estado `'completed'` en `course_progress`; repetir un paso ya completado responde éxito sin cambios. Los minijuegos con contenido en el simulador exigen además **al menos una partida terminada** (`simulator_attempts` con `status = 'completed'`). El módulo `'exam'` está protegido contra marcado manual: solo el endpoint `/api/submit-exam` puede otorgarlo tras calificar formalmente con la nota mínima (90%). Los conteos de avance (bloqueo del examen, estándar IES, CSV, recordatorios) solo cuentan pasos de la malla vigente.
 
 ### Control de Visualización en Videos ([`VideoPlayer.js`](file:///c:/Oscar/ArcoC/client/src/components/VideoPlayer.js))
 * **Detección de Adelanto No Autorizado (Anti-Scrubbing):** Si el estudiante intenta saltar a una marca de tiempo superior a la observada de forma continua (+2 segundos de tolerancia), el reproductor revierte inmediatamente el cursor al tiempo máximo visto legítimamente y muestra una advertencia visual.
@@ -387,10 +420,12 @@ sequenceDiagram
 ```
 
 ### Reglas Críticas Implementadas:
+* **Reglas en un solo lugar:** preguntas por intento (10), nota mínima (90%), intentos (3) y costo del comodín (100 puntos) viven en [`server/config/examRules.js`](server/config/examRules.js). Los usan el API, el estándar IES, el certificado, el acta y los correos, y `/api/student/me` (y el login) los entrega al frontend en `exam: { questionCount, passScore, wildcardCost, maxAttempts, attemptsUsed, attemptsLeft, inProgress, passed }`. Cambiar un valor ahí actualiza todos los textos.
 * **Intento abierto obligatorio:** `/api/start-exam` abre el intento y fija su set de preguntas. Sin intento abierto, `/api/questions`, `/api/submit-exam` y `/api/use-wildcard` responden `409`. Así no se pueden ver preguntas sin consumir un intento ni enviar exámenes sin pasar por el límite de 3.
 * **Set de preguntas fijo por intento:** recargar la página devuelve las mismas preguntas. `/api/submit-exam` exige responder exactamente ese set (no se pueden elegir preguntas) con opciones `a`–`d`, y la respuesta no revela qué preguntas fueron correctas.
 * **Costo Inmutable del Comodín 50/50:** Fijado rígidamente en el servidor en **100 Puntos de Reserva**. Cualquier parámetro de costo enviado desde el navegador es descartado. Solo se puede usar dentro del intento y sobre una de sus preguntas.
-* **Límite de Intentos:** Máximo **3 intentos**; cada clic en "Empezar Examen" consume uno (si había uno abierto, conserva sus preguntas). Superado el límite, `/api/start-exam` responde `403` y la página muestra el motivo sin iniciar.
+* **Límite de Intentos:** Máximo **3 intentos**; cada clic en "Empezar Examen" consume uno (si había uno abierto, conserva sus preguntas). Antes de empezar, la página muestra los intentos usados y restantes; sin intentos lo explica y deshabilita el botón, y si se llama a la API igualmente, `/api/start-exam` responde `403`.
+* **Perfil al día:** al iniciar y al enviar el examen, la página vuelve a pedir `/api/student/me`, así que al volver al curso la nota, el estado de aprobación y los intentos restantes son los reales sin recargar.
 * **Bloqueo de Reenvío Aprobado:** Si el estudiante ya aprobó, `/api/start-exam` y `/api/submit-exam` responden `409 Conflict`.
 * **Malla completa en producción:** `/api/start-exam`, `/api/questions` y `/api/submit-exam` exigen los 26 pasos completados cuando `NODE_ENV=production`.
 * **Calificación Atómica:** La evaluación se calcula únicamente en el servidor comparando las respuestas enviadas contra la base de datos. Se emplea `withTransaction` para garantizar que la nota máxima registrada sea `MAX(puntaje_actual, puntaje_previo)`.
@@ -436,7 +471,7 @@ La supervisión remota en tiempo real se orquesta entre [`useProctoring.js`](fil
 
 ## 9. Certificación Digital y Verificación Pública
 
-Al superar la evaluación final con un puntaje mínimo del **90%**, el estudiante se hace acreedor a la constancia académica oficial.
+Al superar la evaluación final con la nota mínima (`EXAM_PASS_SCORE_PERCENT` en `examRules.js`, hoy **90%**), el estudiante se hace acreedor a la constancia académica oficial.
 
 ### Generación Dinámica en PDF ([`server/utils/certificate.js`](file:///c:/Oscar/ArcoC/server/utils/certificate.js))
 * Construido con **PDFKit** en orientación horizontal (*landscape*), tamaño carta.
@@ -447,6 +482,8 @@ Al superar la evaluación final con un puntaje mínimo del **90%**, el estudiant
 Cada certificado cuenta con una firma matemática determinística única:
 $$\text{hashInput} = \text{studentId} + \text{"-"} + \text{email} + \text{"-"} + \text{exam\_score} + \text{"-"} + \text{completed\_at}$$
 $$\text{VerificationCode} = \text{"CARM-"} + \text{SHA256}(\text{hashInput})[0..12].\text{toUpperCase}()$$
+
+El código se calcula **una sola vez, al aprobar** (`/api/submit-exam`), y se guarda en `course_progress.certificate_code`. El PDF imprime y lleva en el QR **ese código guardado**, sin recalcularlo, así que siempre coincide con lo que valida `/api/verify`. Antes se recalculaba con `completed_at`, que en PostgreSQL vuelve como fecha y no como texto: el PDF mostraba otro código y su QR no validaba. La respuesta del PDF incluye el código en la cabecera `X-Verification-Code`; un registro antiguo sin código lo calcula y lo guarda en su primera descarga.
 
 ### Endpoint Público de Verificación
 Terceros, empleadores o instituciones auditoras pueden validar la autenticidad de cualquier constancia a través de:
@@ -580,9 +617,14 @@ ALLOWED_ORIGINS=http://localhost:3000
 TEST_RESET_SECRET=test-reset-secret-local
 # Opcional para nube:
 # DATABASE_URL=postgresql://usuario:pass@host:5432/carm_master?sslmode=require
+# DATABASE_SSL=require            # SSL hacia PostgreSQL si la URL no trae sslmode: disable | require | no-verify (por defecto)
 # BIOMETRIC_ENCRYPTION_KEY=clave_de_32_bytes_para_aes_256_gcm
 # Detrás de un proxy inverso (nginx, balanceador, gateway de Docker): número de saltos de confianza
 # TRUST_PROXY=1
+# Otro archivo SQLite (p. ej. una base desechable para pruebas); por defecto ./database.sqlite
+# SQLITE_PATH=./database.sqlite
+# Retención de exam_logs en días; sin definir o 0 se conservan siempre (evidencia de auditoría)
+# EXAM_LOG_RETENTION_DAYS=0
 ```
 El límite global de la API (200 solicitudes / 15 min en producción) se cuenta **por estudiante autenticado** y, sin sesión, por IP. Así los estudiantes que comparten la red de un hospital no agotan un cupo común. Detrás de un proxy define `TRUST_PROXY` para que la IP sea la del cliente.
 
@@ -596,16 +638,18 @@ JWT_SECRET=<el mismo valor que el backend> # Obligatorio: src/proxy.js valida la
 Sin el mismo `JWT_SECRET`, el proxy de Next rechaza la cookie: toda ruta protegida redirige a `/login` y el contenido del curso (videos, build WebGL, PDF, imágenes) responde `401`, aunque el login responda 200. Si la variable falta, el proxy registra un error y rechaza todo; ya no usa un secreto de respaldo. En Docker, `docker-compose.yml` se lo pasa al servicio `frontend` en tiempo de ejecución.
 
 ### 3. Docker Compose
-El archivo [`docker-compose.yml`](file:///c:/Oscar/ArcoC/docker-compose.yml) compila e interconecta:
-* **carm-backend:** Basado en `Dockerfile.backend` (Node.js Alpine).
-* **carm-frontend:** Basado en `Dockerfile.frontend` (Next.js multi-stage build optimizado).
+El archivo [`docker-compose.yml`](file:///c:/Oscar/ArcoC/docker-compose.yml) compila e interconecta, con `ArcoC/` como contexto de build:
+* **carm-db:** PostgreSQL 16. El backend se conecta por la red interna **sin SSL** (`DATABASE_SSL=disable`, valor por defecto en el compose). Antes intentaba SSL y no podía arrancar contra este contenedor («The server does not support SSL connections»). Con una base externa define `DATABASE_SSL=require` o `sslmode` en `DATABASE_URL`.
+* **carm-backend:** basado en `Dockerfile.backend` (Node.js Alpine). Instala solo las dependencias de producción del backend con `npm ci --omit=dev --workspaces=false`: el workspace `client` queda fuera aunque `client/` llegue al contexto.
+* **carm-frontend:** basado en `Dockerfile.frontend`, un build multi-etapa de Next.js. Instala el workspace con `npm ci --workspace=client` desde el `package-lock.json` de `ArcoC/`, el mismo que usan el desarrollo y las pruebas E2E. La salida `standalone` conserva la estructura del workspace (raíz en `/app`, la app en `client/`), así que la imagen arranca con `node client/server.js`.
+* **`.dockerignore`:** deja fuera del contexto los `node_modules` y el `.next` del host, los `.env*` y las bases SQLite. Las dependencias se instalan dentro de la imagen y los secretos llegan en tiempo de ejecución.
 
 ### 4. Healthchecks y Graceful Shutdown
-* Rutas `/health` y `/api/health` disponibles para balanceadores de carga y sondas de liveness/readiness.
-* El proceso captura señales `SIGTERM` y `SIGINT`, cerrando las conexiones HTTP, limpiando los sockets activos de proctoring y forzando la sincronización de la base de datos SQLite a disco antes de finalizar.
+* Rutas `/health` y `/api/health` disponibles para balanceadores de carga y sondas de liveness/readiness. Informan además `database` (`sqlite` | `postgresql`) y `schemaVersion` (última migración aplicada).
+* El proceso captura señales `SIGTERM` y `SIGINT`, cierra las conexiones HTTP y los sockets activos de proctoring, y con `closeDb()` escribe SQLite en disco de inmediato (o cierra el pool de PostgreSQL) antes de finalizar. Los scripts de `server/scripts/` también terminan con `closeDb()`: antes, el guardado diferido de SQLite (500 ms) podía perderse al salir y el pool de PostgreSQL dejaba el proceso abierto.
 
 ### 5. Contenido Multimedia y Build WebGL del Simulador
-Los videos definitivos y el build de Unity son artefactos pesados: **no se versionan en git** (ver `.gitignore`) y se generan localmente antes de construir la imagen del frontend. `Dockerfile.frontend` copia `client/` completo, así que quedan incluidos en la imagen y Next.js los sirve desde el mismo origen que la plataforma, solo a estudiantes con sesión y con caché privada (ver sección 11).
+Los videos definitivos y el build de Unity son artefactos pesados: **no se versionan en git** (ver `.gitignore`) y se generan localmente antes de construir la imagen del frontend. `Dockerfile.frontend` copia `client/` (`.dockerignore` solo excluye `node_modules`, `.next` y los `.env*`), así que quedan incluidos en la imagen y Next.js los sirve desde el mismo origen que la plataforma, solo a estudiantes con sesión y con caché privada (ver sección 11).
 
 * **Videos** (`client/public/videos/moduloN/`): requieren `ffmpeg` (`winget install Gyan.FFmpeg`).
   ```powershell
@@ -620,43 +664,41 @@ Los videos definitivos y el build de Unity son artefactos pesados: **no se versi
   ```
   Usa la plantilla `Assets/WebGLTemplates/CArmEmbed` (canvas a pantalla completa y puente de mensajes con la plataforma). La compresión WebGL está desactivada, así que no se requieren cabeceras `Content-Encoding` especiales.
 * Si prefieres versionarlos, usa Git LFS: GitHub rechaza archivos de más de 100 MB.
+* El lint del cliente (`npm --workspace=client run lint`) no analiza el build WebGL (`client/public/webgl/**`) ni los bundles minificados de terceros (`client/public/**/*.min.js`, como `workers/face-api.min.js`): no son código del proyecto. Ver `globalIgnores` en `client/eslint.config.mjs`.
 
 ### 6. Dependencias npm y Alertas de Seguridad (Dependabot)
 Versiones clave: **Next.js 16.4.6** (con `eslint-config-next` 16.4.6), **React 19.2.8** y **@vladmandic/face-api 1.7.15**. En Next 16, la versión 16.4.1 corrige las alertas críticas y altas, y la 16.4.5 las moderadas. La serie 16.3 no recibió esos parches: su última versión, la 16.3.8, sigue afectada.
 
-GitHub (Dependabot) revisa **tres** lockfiles en `ArcoC/`, y cada uno se instala por separado:
+GitHub (Dependabot) revisa **dos** lockfiles en `ArcoC/`, y cada uno se instala por separado:
 
 | Lockfile | Lo usa | Contenido |
 | :--- | :--- | :--- |
-| `package-lock.json` | `npm install` en `ArcoC/` (desarrollo y pruebas E2E) y `Dockerfile.backend` | Backend Express y el workspace `client` |
-| `client/package-lock.json` | `Dockerfile.frontend`, que instala `client/` por su cuenta | Solo el frontend Next.js |
+| `package-lock.json` | `npm install` en `ArcoC/` (desarrollo y pruebas E2E), `Dockerfile.backend` y `Dockerfile.frontend` | Backend Express y el workspace `client` (frontend Next.js) |
 | `public/documents/package-lock.json` | `convert.js` (compilación de las lecturas a PDF) | `md-to-pdf` y `puppeteer` |
 
-* **Al cambiar una dependencia del cliente, actualiza los dos primeros.** Dentro de `client/`, npm trabaja sobre el workspace raíz (`npm prefix` devuelve `ArcoC/`), así que `client/package-lock.json` se regenera desde una copia aislada (comandos desde `ArcoC/`):
-  ```powershell
-  $tmp = New-Item -ItemType Directory -Force (Join-Path $env:TEMP "client-lock")
-  Copy-Item client\package.json, client\package-lock.json $tmp
-  Push-Location $tmp; npm install --package-lock-only --ignore-scripts; npm audit --package-lock-only; Pop-Location
-  Copy-Item (Join-Path $tmp "package-lock.json") client\package-lock.json
-  ```
+* **El frontend no tiene lockfile propio.** `client/` es un workspace: sus dependencias se instalan y actualizan desde `ArcoC/` (por ejemplo, `npm install <paquete> --workspace=client`), y `Dockerfile.frontend` las instala del mismo lockfile con `npm ci --workspace=client`. Dentro de `client/`, npm también trabaja sobre el workspace raíz (`npm prefix` devuelve `ArcoC/`).
 * **Reconocimiento facial: `@vladmandic/face-api` 1.7.15, con la versión fijada.** No tiene dependencias en tiempo de ejecución, así que ya no arrastra `node-fetch` ni necesita `overrides`. Sustituyó a `face-api.js` 0.22.2, cuyo `@tensorflow/tfjs-core` 1.7.0 fijaba `node-fetch ~2.1.2`, una versión vulnerable (ver sección 8). Ten en cuenta dos cosas:
   * `npm audit` no ve el TensorFlow.js 4.22 que va empaquetado. En la revisión periódica, consulta a mano los avisos de `@tensorflow/tfjs-core`.
-  * El worker usa una copia del build en `client/public/workers/face-api.min.js`. Si cambias la versión, regenera los dos lockfiles y actualiza la copia (desde `ArcoC/`):
+  * El worker usa una copia del build en `client/public/workers/face-api.min.js`. Si cambias la versión (`npm install @vladmandic/face-api@<versión> --save-exact --workspace=client`), actualiza también la copia (desde `ArcoC/`):
     ```powershell
     Copy-Item node_modules\@vladmandic\face-api\dist\face-api.js client\public\workers\face-api.min.js
     ```
   El repositorio del fork está archivado y 1.7.15 es su versión final. Si aparece un fork mantenido que conserve los mismos modelos y el descriptor de 128 valores, conviene migrar a él.
-* **Revisión periódica:** `npm audit` en `ArcoC/`, en la copia aislada de `client/` y en `public/documents/` (`npm audit --package-lock-only`). Prefiere `npm audit fix` y versiones menores o de parche. Antes de un salto mayor, lee sus notas; para Next, la guía de `node_modules/next/dist/docs/` (ver `client/AGENTS.md`).
+* **Revisión periódica:** `npm audit` en `ArcoC/` y en `public/documents/` (`npm audit --package-lock-only`). Prefiere `npm audit fix` y versiones menores o de parche. Antes de un salto mayor, lee sus notas; para Next, la guía de `node_modules/next/dist/docs/` (ver `client/AGENTS.md`).
 
 ---
 
 ## 13. Suite de Pruebas Automatizadas (Playwright)
 
-El proyecto cuenta con un conjunto integral de **69 pruebas E2E automatizadas** organizadas en **21 suites especializadas** ejecutadas con Playwright. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
+El proyecto cuenta con un conjunto integral de **78 pruebas E2E automatizadas** organizadas en **22 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
 
 ```bash
-# Ejecutar todas las 21 suites E2E (69 pruebas completas)
+# Ejecutar todas las 22 suites E2E (78 pruebas) sobre la base de desarrollo (SQLite)
 npx playwright test
+
+# La misma suite sobre un PostgreSQL 16 desechable (sin Docker; detén antes los servidores de desarrollo)
+npm run test:pg
+npm run test:pg -- tests/e2e/22-base-platform-and-postgres-parity.test.js
 
 # Ejecutar la integración del módulo 1 (malla, videos y contrato con el simulador)
 npx playwright test tests/e2e/19-module1-simulator-integration.test.js
@@ -674,7 +716,20 @@ npx playwright test tests/e2e/15-student-single-sitting-flow.test.js
 npx playwright test tests/e2e/16-student-spaced-interaction-flow.test.js
 ```
 
-### Matriz de Cobertura de Pruebas (69 Tests / 21 Suites)
+**Base de datos para la suite:** basta con una BD recién creada con `npm run seed`, que crea al administrador. Los estudiantes de prueba los crea `POST /api/test-reset` cuando se necesitan (`server.js`, solo fuera de producción). Un estudiante recién creado queda en el mismo estado que uno existente reiniciado: onboarding completo, 150 Puntos de Reserva y sin progreso ni intentos de examen. Las pruebas que necesitan otro punto de partida lo piden explícitamente: los recorridos 15 y 16 empiezan con `is_onboarded: 0` y `reserve_points: 0`. Así, la primera pasada sobre una BD nueva da el mismo resultado que las siguientes. No hay un script para sembrar estudiantes: se retiraron `npm run seed:student` y `npm run clear`, que apuntaban a archivos inexistentes. La corrida sobre PostgreSQL y el CI agregan `npm run seed:questions` (banco oficial con ids 1–50).
+
+### Pruebas sobre PostgreSQL (`npm run test:pg`)
+[`scripts/pg-test/run-e2e.mjs`](scripts/pg-test/run-e2e.mjs) levanta un **PostgreSQL 16 desechable** con el paquete `embedded-postgres` (la primera vez lo instala en `scripts/pg-test/node_modules`; no requiere Docker ni instalar nada en el sistema). Luego crea una base vacía, aplica migraciones y seeds (administrador y banco de 50 preguntas), corre Playwright con `DATABASE_URL` apuntando a ella y al terminar lo borra todo. Con `TEST_DATABASE_URL` usa otra base en lugar de levantar una.
+* Los servidores de desarrollo deben estar detenidos: con `DATABASE_URL` definida (y en CI), `playwright.config.js` nunca reutiliza servidores ya abiertos, que usarían la base SQLite de desarrollo.
+* Va en una carpeta aparte, con su propio `package.json`, para no sumar los binarios de PostgreSQL a las dependencias de la aplicación ni a sus imágenes Docker.
+
+### Integración Continua ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml))
+En cada push a `main` y en cada pull request:
+* **Lint del cliente** (`npm --workspace=client run lint`).
+* **E2E sobre SQLite** (base nueva en el runner, con seeds) y **E2E sobre PostgreSQL** (`npm run test:pg`), en paralelo. Si fallan, se suben los artefactos de `test-results` (trazas de los reintentos).
+* Las variables del workflow son exclusivas de prueba, no secretos de producción. Las pruebas que necesitan los videos definitivos o el build WebGL se omiten solas porque esos archivos no están en git.
+
+### Matriz de Cobertura de Pruebas (78 Tests / 22 Suites)
 
 Las reglas que dependen del tiempo real (visualización mínima de videos y duración mínima de partidas) solo rigen con `NODE_ENV=production`, por eso no entran en esta suite, que corre en desarrollo. Se verifican arrancando la API en producción: un video sin inicio o completado de inmediato responde `403`, un resultado instantáneo `422`, y el uso legítimo se acepta (video a los 75 s, partida de 32 s).
 
@@ -699,8 +754,9 @@ Las reglas que dependen del tiempo real (visualización mínima de videos y dura
 | **17** | **`17-admin-cohorts-and-compliance.test.js`** | **Gestión de Promociones, Correo de Inducción y Estándar IES:** Matriculación de estudiantes en promociones segregadas (*Promoción 1*, *Promoción 2*), verificación del despacho automático del correo de confirmación de matrícula con credenciales, fecha habilitada de inicio y guía de 5 pasos en `email_logs`; filtrado dinámico en tiempo real por cohorte en el panel administrativo; evaluación interactiva del Modal de Estándar IES demostrando rechazo fundamentado en estudiantes en curso y otorgamiento del veredicto *"CUMPLE EL ESTÁNDAR (Aval IES)"* para estudiantes graduados (6 criterios con check verde y código SHA-256); y exportación legal en archivo CSV para auditoría ministerial e IES con UTF-8 BOM. |
 | **18** | **`18-admin-qol-and-audit-tools.test.js`** | **Herramientas de Calidad de Vida (QoL) y Auditoría Ministerial:** Descarga y validación binaria (`%PDF-`) del Acta Colectiva / Libro de Calificaciones IES con membrete formal y códigos QR; sellado y cierre criptográfico inmutable de promociones mediante hash SHA-256 (con bloqueo `409 Conflict` ante intentos de re-cierre); reenvío instantáneo de correos de inducción y guía operativa con trazabilidad forense; y detección de rezago académico (+7 días) con cálculo automático en UI y despacho de recordatorios personalizados. |
 | **19** | **`19-module1-simulator-integration.test.js`** | **Módulo 1 de punta a punta:** la malla del cliente coincide con `COURSE_STEPS` del servidor (26 pasos, módulo 1 = 3 videos + 3 minijuegos) y cada video tiene su duración registrada; los videos definitivos se sirven (con sesión) con soporte de rangos y *faststart*; un minijuego aporta como máximo 50 puntos; API del simulador (secuencia, escena/fase decididas por la API, niveles 10/5/0, idempotencia, fase y tiempo incoherentes rechazados, techo de 500, finalizar exige una partida, 409 tras finalizar, un estudiante no puede usar la partida de otro); contrato del iframe con un build simulado que habla el mismo protocolo que Unity (URL de lanzamiento, mensajes de otro intento ignorados, resultado registrado y acuse `phase-ack` devuelto al simulador); y, si existe `client/public/webgl`, el build real: Unity carga en el iframe, lee el lanzamiento y procesa el acuse en C#. |
-| **20** | **`20-exam-integrity-and-proctoring.test.js`** | **Integridad del examen y proctoring en servidor:** sin intento abierto no hay preguntas, envío ni comodín (409); el set de preguntas es fijo por intento; se rechazan respuestas fuera de `a`–`d` o de otras preguntas; la calificación no revela qué respuestas fueron correctas y cierra el intento; quien ya aprobó no puede abrir otro; la página muestra el motivo real cuando la API rechaza las preguntas o el inicio (curso incompleto, 3 intentos agotados) en lugar de caerse; y, por WebSocket, la supervisión suspende sin rostro, cierra el intento en el servidor y no castiga a quien terminó con `end_exam`. |
+| **20** | **`20-exam-integrity-and-proctoring.test.js`** | **Integridad del examen y proctoring en servidor:** sin intento abierto no hay preguntas, envío ni comodín (409); el set de preguntas es fijo por intento; se rechazan respuestas fuera de `a`–`d` o de otras preguntas; la calificación no revela qué respuestas fueron correctas y cierra el intento; quien ya aprobó no puede abrir otro; la página muestra el motivo real cuando la API rechaza las preguntas (curso incompleto) en lugar de caerse; con los 3 intentos agotados la página lo explica y deshabilita el botón antes de empezar, y la API responde `403` si se la llama igualmente; y, por WebSocket, la supervisión suspende sin rostro, cierra el intento en el servidor y no castiga a quien terminó con `end_exam`. |
 | **21** | **`21-content-protection-and-video-watch.test.js`** | **Contenido protegido y visualización de videos:** sin sesión, videos, build WebGL, PDF e imágenes del curso responden `401` y abrir un PDF lleva al login; con sesión se sirven con `Cache-Control: private`; el backend ya no publica las fuentes Markdown de `ArcoC/public`; el inicio de reproducción se registra una sola vez, solo para videos y respetando la secuencia; y la página lo registra al reproducir. |
+| **22** | **`22-base-platform-and-postgres-parity.test.js`** | **Bases de la plataforma y paridad PostgreSQL** (corre igual en ambos motores): `/api/health` informa motor y `schemaVersion`; el código del certificado (cabecera `X-Verification-Code`) es el que valida `/api/verify` y no cambia al volver a descargarlo; `/api/admin/cohorts` responde con totales numéricos; el estándar IES y el CSV usan las reglas vigentes (`examRules.js`, 26 pasos) y no textos fijos («45/50», «de 25»); `/api/student/me` entrega las reglas del examen y los intentos restantes sin campos sensibles; en el curso, quien reprobó ve «❌ No aprobado» con su nota y puede reintentar con los intentos restantes, quien agotó los intentos ve el examen deshabilitado, quien aprobó ve «✅ Aprobado» con su nota; y «Continuar donde quedé» abre el módulo y resalta el paso pendiente. |
 
 ---
 

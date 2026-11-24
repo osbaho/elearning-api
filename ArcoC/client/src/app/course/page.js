@@ -10,10 +10,23 @@ import 'driver.js/dist/driver.css';
 
 import { courseModules, ALL_STEPS } from '../../lib/courseConfig';
 
+function moduleIdOfStep(stepKey) {
+  return courseModules.find(m => m.items.some(i => i.key === stepKey))?.id ?? null;
+}
+
+function stepTitle(stepKey) {
+  for (const mod of courseModules) {
+    const item = mod.items.find(i => i.key === stepKey);
+    if (item) return item.title;
+  }
+  return stepKey;
+}
+
 export default function Course() {
   const { user, setUser, loading } = useAuth();
   const { addToast } = useToast();
-  const [activeModuleId, setActiveModuleId] = useState(1);
+  // Módulo que eligió el estudiante en la barra lateral (null = el de su paso actual)
+  const [selectedModuleId, setSelectedModuleId] = useState(null);
   const tourInitialized = useRef(false);
 
   const completedModules = user?.completedModules || [];
@@ -22,9 +35,33 @@ export default function Course() {
   const completedSteps = ALL_STEPS.filter(k => completedModules.includes(k)).length;
   const progressPercent = Math.round((completedSteps / TOTAL_STEPS) * 100);
 
-  const examCompleted = user?.examScore !== null && user?.examScore !== undefined;
+  // Reglas del examen definidas por el servidor (server/config/examRules.js → /student/me)
+  const examRules = user?.exam;
+  const passScore = examRules?.passScore ?? 90;
+  const attemptsLeft = examRules?.attemptsLeft;
+  // 'exam' solo se registra al aprobar; una nota sin aprobar significa que presentó y no alcanzó el mínimo
+  const examPassed = completedModules.includes('exam');
+  const examAttempted = user?.examScore !== null && user?.examScore !== undefined;
+  const examFailed = examAttempted && !examPassed;
+  const noAttemptsLeft = !examPassed && attemptsLeft === 0;
   // Exam is locked if not all module steps are completed
   const examLocked = completedSteps < TOTAL_STEPS;
+
+  // Paso que le toca: el primero sin completar (la API obliga a seguir el orden) o el examen
+  const nextStepKey = ALL_STEPS.find(k => !completedModules.includes(k)) ?? null;
+  const nextTarget = nextStepKey ?? (examPassed ? null : 'exam');
+  const nextModuleId = nextStepKey ? moduleIdOfStep(nextStepKey) : nextTarget;
+  const activeModuleId = selectedModuleId ?? nextModuleId ?? 1;
+  const nextLabel = nextTarget === 'exam' ? 'Examen Final' : stepTitle(nextStepKey);
+
+  const handleContinue = () => {
+    if (!nextTarget) return;
+    setSelectedModuleId(nextModuleId);
+    // Espera a que se pinte el módulo y lleva la vista a la tarjeta del paso pendiente
+    setTimeout(() => {
+      document.getElementById(`step-${nextTarget}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 60);
+  };
 
   // Registra el inicio de la reproducción: en producción, la API mide desde aquí el tiempo mínimo
   // de visualización antes de aceptar el video como visto.
@@ -115,7 +152,7 @@ export default function Course() {
             element: '.tour-first-module',
             popover: {
               title: 'Los Módulos 📚',
-              description: 'El curso está dividido en 5 módulos. Cada uno tiene lecciones en video, resúmenes y minijuegos prácticos.',
+              description: `El curso está dividido en ${courseModules.length} módulos. Cada uno tiene lecciones en video, resúmenes y minijuegos prácticos.`,
               side: 'right',
               align: 'start'
             }
@@ -133,7 +170,7 @@ export default function Course() {
             element: '.tour-exam',
             popover: {
               title: 'El Gran Reto 🏆',
-              description: 'Al completar todos los módulos, se desbloqueará el Examen Final. Necesitas un 90% para aprobar. Y cuidado... la IA vigilará tu rostro (Proctoring). ¡Buena suerte!',
+              description: `Al completar todos los módulos, se desbloqueará el Examen Final. Necesitas un ${passScore}% para aprobar. Y cuidado... la IA vigilará tu rostro (Proctoring). ¡Buena suerte!`,
               side: 'top',
               align: 'center'
             }
@@ -155,7 +192,7 @@ export default function Course() {
         driverObj.destroy();
       };
     }
-  }, [user]);
+  }, [user, passScore]);
 
   if (loading) return <div className="container py-20 text-center">Cargando...</div>;
   if (!user) return (
@@ -195,6 +232,17 @@ export default function Course() {
               />
             </div>
             <div className="progress-text mt-12 text-right">{progressPercent}% completado</div>
+            {nextTarget && (
+              <button
+                id="btn-continue-course"
+                className="btn btn-primary mt-16"
+                onClick={handleContinue}
+                disabled={nextTarget === 'exam' && noAttemptsLeft}
+                title={nextTarget === 'exam' && noAttemptsLeft ? 'Ya no te quedan intentos de examen' : undefined}
+              >
+                ▶ {completedSteps === 0 ? 'Comenzar' : 'Continuar donde quedé'}: {nextLabel}
+              </button>
+            )}
           </div>
         </div>
       </section>
@@ -206,9 +254,9 @@ export default function Course() {
           <h3 className="sidebar-title">Módulos</h3>
           <div className="course-sidebar-nav">
             {courseModules.map((mod) => (
-              <button 
-                key={mod.id} 
-                onClick={() => setActiveModuleId(mod.id)}
+              <button
+                key={mod.id}
+                onClick={() => setSelectedModuleId(mod.id)}
                 className={`sidebar-nav-btn ${activeModuleId === mod.id ? 'active' : ''}`}
               >
                 {mod.title.split(':')[0]}
@@ -217,7 +265,7 @@ export default function Course() {
             
             <div className="mt-8 pt-8">
               <button 
-                onClick={() => setActiveModuleId('exam')}
+                onClick={() => setSelectedModuleId('exam')}
                 className={`sidebar-nav-btn sidebar-nav-exam ${activeModuleId === 'exam' ? 'active' : ''}`}
                 disabled={examLocked}
               >
@@ -242,7 +290,7 @@ export default function Course() {
 
         {/* Contenido (El scroll se maneja con la página principal) */}
         <main className="course-main-content">
-          {user?.examScore >= 90 && (
+          {examPassed && (
             <div className="card mb-24 flex-between items-center flex-wrap gap-16 animate-fade-in card-course-passed">
               <div>
                 <h3 className="text-cyan font-bold mb-4 title-passed">🎓 ¡Felicitaciones! Has aprobado el curso</h3>
@@ -276,6 +324,8 @@ export default function Course() {
                     return (
                       <ModuleCard
                         key={item.key}
+                        id={`step-${item.key}`}
+                        isCurrent={item.key === nextStepKey}
                         type={item.type}
                         title={item.title}
                         description={item.description}
@@ -304,17 +354,24 @@ export default function Course() {
               <h2 className="title-lg">Examen Final</h2>
               <div className="cards-grid grid-1 tour-exam">
                 <ModuleCard
+                  id="step-exam"
                   type="exam"
                   title="Evaluación Final"
-                  description="Examen con banco de preguntas aleatorias. Debes obtener un 90% para aprobar. Incluye proctoring biométrico estricto."
+                  description={`Examen con banco de preguntas aleatorias${examRules?.questionCount ? ` (${examRules.questionCount} por intento)` : ''}. Debes obtener un ${passScore}% para aprobar. Incluye proctoring biométrico estricto.`}
                   icon="📝"
                   iconClass="amber"
-                  isCompleted={examCompleted}
+                  isCompleted={examPassed}
                   isLocked={examLocked}
+                  isCurrent={nextTarget === 'exam'}
                   linkHref="/course/exam"
-                  linkText="Presentar Examen"
-                  completedText="Examen Finalizado"
-                  scoreInfo={user?.examScore}
+                  linkText={examFailed
+                    ? `Reintentar Examen${attemptsLeft !== undefined ? ` (${attemptsLeft === 1 ? '1 intento restante' : `${attemptsLeft} intentos restantes`})` : ''}`
+                    : 'Presentar Examen'}
+                  completedText="Examen Aprobado"
+                  scoreInfo={examPassed ? user?.examScore : undefined}
+                  statusOverride={examFailed ? { text: `❌ No aprobado (${user.examScore}%)`, className: 'status-danger' } : undefined}
+                  actionDisabled={noAttemptsLeft}
+                  actionDisabledText="Sin intentos disponibles · Contacta al administrador"
                 />
               </div>
             </div>

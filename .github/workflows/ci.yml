@@ -1,0 +1,84 @@
+# Integración continua de ArcoC: lint del cliente y suite E2E sobre SQLite y PostgreSQL.
+# Ver ArcoC/DOCUMENTATION.md, sección 13 (Suite de Pruebas Automatizadas).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: ArcoC
+
+env:
+  # Valores exclusivos de pruebas (no son secretos de producción)
+  JWT_SECRET: ci-only-jwt-secret-not-for-production-0123456789
+  ALLOWED_ORIGINS: http://localhost:3000
+  NEXT_PUBLIC_API_URL: http://localhost:5000/api
+  NEXT_PUBLIC_SOCKET_URL: http://localhost:5000
+  ADMIN_EMAIL: admin@admin.com
+  ADMIN_PASSWORD: test-admin-password
+  TEST_RESET_SECRET: test-reset-secret-local
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  lint:
+    name: Lint del cliente
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: ArcoC/package-lock.json
+      - run: npm ci
+      - run: npm --workspace=client run lint
+
+  e2e:
+    name: E2E (${{ matrix.db }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [sqlite, postgres]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: |
+            ArcoC/package-lock.json
+            ArcoC/scripts/pg-test/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+
+      # SQLite: base nueva en el runner; initDb aplica las migraciones
+      - name: Seeds (SQLite)
+        if: matrix.db == 'sqlite'
+        run: |
+          node server/scripts/seed.js
+          node server/scripts/seed_50_questions.js
+      - name: E2E sobre SQLite
+        if: matrix.db == 'sqlite'
+        run: npx playwright test
+
+      # PostgreSQL 16 desechable (scripts/pg-test): migraciones, seeds y la misma suite
+      - name: E2E sobre PostgreSQL
+        if: matrix.db == 'postgres'
+        run: npm run test:pg
+
+      - name: Evidencias de las pruebas fallidas
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-${{ matrix.db }}-test-results
+          path: ArcoC/test-results
+          retention-days: 7

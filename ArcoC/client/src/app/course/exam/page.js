@@ -25,7 +25,7 @@ const fetcher = async (url) => {
 
 export default function ExamPage() {
   const router = useRouter();
-  const { user, setUser, loading } = useAuth();
+  const { user, setUser, loading, checkSession } = useAuth();
   const { addToast } = useToast();
   const [examStarted, setExamStarted] = useState(false);
   const [answers, setAnswers] = useState({});
@@ -40,6 +40,14 @@ export default function ExamPage() {
 
   const completedModules = user?.completedModules || [];
   const alreadyCompleted = completedModules.includes('exam');
+
+  // Reglas vigentes del examen: las define el servidor (server/config/examRules.js → /student/me)
+  const examRules = user?.exam;
+  const passScore = examRules?.passScore ?? 90;
+  const maxAttempts = examRules?.maxAttempts ?? 3;
+  const wildcardCost = examRules?.wildcardCost ?? 100;
+  const attemptsLeft = examRules?.attemptsLeft;
+  const noAttemptsLeft = attemptsLeft === 0;
 
   const { videoRef, isModelLoaded, faceDetected, isFaceMatch, examSuspended, proctoringWarning, webcamError, isMockMode, startProctoring, stopProctoring } = useProctoring();
 
@@ -138,14 +146,14 @@ export default function ExamPage() {
   // ── If exam already completed, show previous score ────────────────────────
   if (alreadyCompleted && score === null) {
     const previousScore = user?.examScore ?? 0;
-    const passed = previousScore >= 90;
+    const passed = previousScore >= passScore;
     return (
       <div className="container py-course text-center">
         <h1 className="title-lg">Evaluación Final</h1>
         <div className="card max-w-500 mx-auto">
           <div className={`result-score ${passed ? 'pass' : 'fail'}`}>{previousScore}%</div>
           <p className="result-label">
-            {passed ? '✅ Ya aprobaste el curso.' : '❌ Necesitabas 90% para aprobar.'}
+            {passed ? '✅ Ya aprobaste el curso.' : `❌ Necesitabas ${passScore}% para aprobar.`}
           </p>
           <p className="text-secondary mt-16 text-sm">
             El examen ya fue presentado y no puede repetirse.
@@ -166,7 +174,7 @@ export default function ExamPage() {
       const cameraReady = await startProctoring();
       if (!cameraReady) return;
 
-      // 2. Abrir el intento en el servidor (fija las preguntas y descuenta 1 de 3 intentos)
+      // 2. Abrir el intento en el servidor (fija las preguntas y descuenta un intento)
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/start-exam`, {
         method: 'POST',
         credentials: 'include'
@@ -180,6 +188,8 @@ export default function ExamPage() {
       }
       setAttemptInfo({ used: data?.attemptsUsed, max: data?.maxAttempts });
       setExamStarted(true);
+      // Actualiza el perfil (intentos usados) para que el curso muestre los intentos restantes
+      checkSession();
     } catch (err) {
       console.error('Error starting exam:', err);
       stopProctoring();
@@ -260,6 +270,8 @@ export default function ExamPage() {
         sessionStorage.removeItem('exam_answers');
         sessionStorage.removeItem('exam_eliminated');
         setScore(data.score);
+        // Nota y estado de aprobación al día al volver al curso (sin recargar la página)
+        checkSession();
       } else {
         setSubmitError(data.error || 'Error al enviar el examen.');
       }
@@ -303,13 +315,20 @@ export default function ExamPage() {
 
   // ── Score screen ─────────────────────────────────────────────────────────
   if (score !== null) {
-    const passed = score >= 90;
+    const passed = score >= passScore;
     return (
       <div className="container py-course text-center animate-fade-in">
         <h2 className="title-lg">¡Examen Finalizado!</h2>
         <div id="result-screen" className="card max-w-500 mx-auto">
           <div id="result-score-display" className={`result-score ${passed ? 'pass' : 'fail'}`}>{score}%</div>
-          <p className="result-label">{passed ? '✅ ¡Felicitaciones! Has aprobado el curso.' : '❌ Necesitas 90% para aprobar.'}</p>
+          <p className="result-label">{passed ? '✅ ¡Felicitaciones! Has aprobado el curso.' : `❌ Necesitas ${passScore}% para aprobar.`}</p>
+          {!passed && attemptsLeft !== undefined && (
+            <p id="result-attempts-left" className="text-secondary text-sm mt-8">
+              {attemptsLeft > 0
+                ? `Te ${attemptsLeft === 1 ? 'queda 1 intento' : `quedan ${attemptsLeft} intentos`}: puedes volver a presentarlo desde el curso.`
+                : 'Ya no te quedan intentos. Contacta al administrador del curso.'}
+            </p>
+          )}
           {passed && (
             <button
               className="btn btn-primary mt-16 w-full flex-center gap-8"
@@ -361,11 +380,20 @@ export default function ExamPage() {
                 <div className="question-card">
                   <h3>Instrucciones del Examen</h3>
                   <p className="mt-16">
-                    Responderás un set aleatorio de preguntas sobre radioprotección y operación del Arco en C.
-                    Necesitas <strong>90%</strong> para aprobar y tienes un máximo de <strong>3 intentos</strong>: cada vez que
+                    Responderás un set aleatorio de
+                    {examRules?.questionCount ? <> <strong>{examRules.questionCount} preguntas</strong></> : ' preguntas'} sobre
+                    radioprotección y operación del Arco en C.
+                    Necesitas <strong>{passScore}%</strong> para aprobar y tienes un máximo de <strong>{maxAttempts} intentos</strong>: cada vez que
                     pulsas &quot;Empezar Examen&quot; se descuenta uno. Puedes usar el comodín 🪄 <strong>50/50</strong> consumiendo
-                    100 Puntos de Reserva por pregunta.
+                    {' '}{wildcardCost} Puntos de Reserva por pregunta.
                   </p>
+                  {examRules && (
+                    <p id="exam-attempts-status" className={`mt-12 text-sm ${noAttemptsLeft ? 'text-red font-bold' : 'text-cyan'}`}>
+                      {noAttemptsLeft
+                        ? `Ya usaste tus ${maxAttempts} intentos. Contacta al administrador del curso.`
+                        : `Has usado ${examRules.attemptsUsed} de ${maxAttempts} intentos: te ${attemptsLeft === 1 ? 'queda 1' : `quedan ${attemptsLeft}`}.`}
+                    </p>
+                  )}
                   <p className="text-secondary mt-16 text-sm">
                     Asegúrate de tener buena iluminación. La cámara web estará encendida durante todo el examen.
                   </p>
@@ -378,7 +406,7 @@ export default function ExamPage() {
                     id="start-exam-btn"
                     className="btn btn-primary mt-16"
                     onClick={handleStart}
-                    disabled={startingExam}
+                    disabled={startingExam || noAttemptsLeft}
                   >
                     {startingExam ? 'Iniciando cámara...' : 'Empezar Examen'}
                   </button>
