@@ -94,7 +94,7 @@ test.describe('Seguimiento del avance por promoción y ficha del estudiante', ()
     expect(summarizeRows([
       { percent: 100, exam: { passed: true }, alerts: [] },
       { percent: 10, exam: { passed: false }, alerts: [{ code: 'inactive' }, { code: 'exam_exhausted' }] },
-    ])).toEqual({ students: 2, averagePercent: 55, certified: 1, withAlerts: 1, alertsByCode: { inactive: 1, exam_exhausted: 1 } });
+    ])).toEqual({ students: 2, averagePercent: 55, certified: 1, withAlerts: 1, alertsByCode: { inactive: 1, exam_exhausted: 1 }, testStudents: 0 });
   });
 
   test('GET /api/admin/progress calcula avance, paso actual, mejor nivel por minijuego y alertas', async () => {

@@ -11,7 +11,7 @@ import { EXAM_PASS_SCORE_PERCENT, isExamPassingScore } from '../config/examRules
  */
 export async function generateCertificatePDF(studentId, res) {
   const student = await get(
-    'SELECT id, name, email, exam_score, id_number, id_type, institution FROM students WHERE id = ?',
+    'SELECT id, name, email, exam_score, id_number, id_type, institution, is_test FROM students WHERE id = ?',
     [studentId]
   );
   if (!student) {
@@ -168,6 +168,15 @@ export async function generateCertificatePDF(studentId, res) {
       doc.fontSize(8).fillColor('#999999').text('Constancia académica emitida digitalmente por la plataforma C-Arm Master.', { align: 'center' });
     }
 
+    // Cuenta de prueba (Fase 3): el certificado se marca y su código no se puede verificar
+    if (Number(student.is_test)) {
+      doc.save();
+      doc.rotate(-20, { origin: [width / 2, height / 2] });
+      doc.font('Helvetica-Bold').fontSize(46).fillColor('#d32f2f').fillOpacity(0.25)
+         .text('CERTIFICADO DE PRUEBA — SIN VALIDEZ', 0, height / 2 - 30, { width, align: 'center' });
+      doc.restore();
+    }
+
     doc.end();
   } catch (pdfErr) {
     console.error('Error generating certificate PDF:', pdfErr);
@@ -201,6 +210,7 @@ export async function verifyCertificateCode(code) {
     FROM course_progress cp
     JOIN students s ON s.id = cp.student_id
     WHERE cp.module_id = 'exam' AND cp.status = 'completed' AND cp.certificate_code = ? AND s.exam_score >= ?
+      AND COALESCE(s.is_test, 0) = 0
   `, [cleanCode, EXAM_PASS_SCORE_PERCENT]);
 
   if (fastMatch) {
@@ -226,6 +236,7 @@ export async function verifyCertificateCode(code) {
     FROM students s
     JOIN course_progress cp ON cp.student_id = s.id
     WHERE cp.module_id = 'exam' AND cp.status = 'completed' AND s.exam_score >= ? AND (cp.certificate_code IS NULL OR cp.certificate_code = '')
+      AND COALESCE(s.is_test, 0) = 0
   `, [EXAM_PASS_SCORE_PERCENT]);
 
   for (const row of records) {

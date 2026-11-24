@@ -80,6 +80,7 @@ export default function ProgressTrackingView({ cohort, search, status }) {
           <div className="text-xs text-secondary mt-4" id="progress-summary">
             <strong>{summary.students}</strong> estudiantes · avance promedio <strong>{summary.averagePercent}%</strong> ·{' '}
             <strong>{summary.certified}</strong> certificados · <strong>{summary.withAlerts}</strong> con alertas
+            {summary.testStudents > 0 && <> · <span id="progress-test-students">{summary.testStudents} de prueba (no cuentan)</span></>}
           </div>
         </div>
         <label className="text-xs flex items-center gap-6">
@@ -136,6 +137,7 @@ export default function ProgressTrackingView({ cohort, search, status }) {
                       {s.name}
                     </Link>
                     <div className="text-muted">{s.email}</div>
+                    {s.isTest && <span className="test-badge mt-4 d-inline-block" title="No cuenta en el resumen">🧪 Prueba</span>}
                     {account.key !== 'active' && <span className={`${account.className} mt-4 d-inline-block`}>{account.label}</span>}
                   </td>
                   <td style={{ minWidth: 150 }}>

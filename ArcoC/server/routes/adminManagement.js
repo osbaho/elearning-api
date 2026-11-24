@@ -59,12 +59,12 @@ async function uniqueUsername(db, email) {
   throw new Error('No se pudo generar un nombre de usuario único.');
 }
 
-async function insertStudent(db, { name, email, idType, idNumber, institution, cohort, startDate }) {
+async function insertStudent(db, { name, email, idType, idNumber, institution, cohort, startDate, isTest = false }) {
   const username = await uniqueUsername(db, email);
   await db.run(
-    `INSERT INTO students (name, username, password, email, role, id_number, id_type, institution, cohort, start_date, password_set_at, is_active)
-     VALUES (?, ?, ?, ?, 'student', ?, ?, ?, ?, ?, NULL, 1)`,
-    [name, username, getUnusablePasswordHash(), email, idNumber || null, idType || 'CC', institution || null, cohort, startDate || null]
+    `INSERT INTO students (name, username, password, email, role, id_number, id_type, institution, cohort, start_date, password_set_at, is_active, is_test)
+     VALUES (?, ?, ?, ?, 'student', ?, ?, ?, ?, ?, NULL, 1, ?)`,
+    [name, username, getUnusablePasswordHash(), email, idNumber || null, idType || 'CC', institution || null, cohort, startDate || null, isTest ? 1 : 0]
   );
   const created = await db.get('SELECT id FROM students WHERE LOWER(email) = ?', [email]);
   return { id: created.id, username };
@@ -104,7 +104,7 @@ router.get('/cohorts', async (req, res) => {
              COALESCE(SUM(COALESCE(s.proctoring_incidents, 0) + COALESCE(s.focus_violations, 0)), 0) AS total_incidents,
              cc.closed_at, cc.cohort_seal_hash
         FROM cohorts c
-        LEFT JOIN students s ON s.cohort = c.name AND s.role != 'admin'
+        LEFT JOIN students s ON s.cohort = c.name AND s.role != 'admin' AND COALESCE(s.is_test, 0) = 0
         LEFT JOIN cohort_closures cc ON cc.cohort_name = c.name
        GROUP BY c.id, c.name, c.starts_on, c.ends_on, c.description, cc.closed_at, cc.cohort_seal_hash
        ORDER BY c.name ASC
@@ -262,7 +262,8 @@ router.post('/students', async (req, res) => {
       cohort: body.cohort, startDate: body.start_date ?? body.startDate,
     });
     if (validation.error) return res.status(400).json({ error: validation.error });
-    const student = validation.data;
+    // Estudiante de prueba: no cuenta en estadísticas, actas, CSV ni sellos (sección 10.12)
+    const student = { ...validation.data, isTest: body.isTest === true };
 
     if (await get('SELECT id FROM students WHERE LOWER(email) = ?', [student.email])) {
       return res.status(409).json({ error: 'Ya existe un estudiante registrado con este correo electrónico.' });
@@ -286,7 +287,7 @@ router.post('/students', async (req, res) => {
       const activation = await issueToken({ studentId: created.id, purpose: TOKEN_PURPOSES.ACTIVATION, adminId: req.user.id }, tx);
       await logAdminAction({
         adminId: req.user.id, action: 'student.create', targetType: 'student', targetId: created.id,
-        details: { name: student.name, email: student.email, cohort: student.cohort, startDate: student.startDate },
+        details: { name: student.name, email: student.email, cohort: student.cohort, startDate: student.startDate, isTest: student.isTest },
       }, tx);
       return { created, activation, cohortCreated };
     });
@@ -300,7 +301,7 @@ router.post('/students', async (req, res) => {
       success: true,
       student: {
         id: created.id, name: student.name, username: created.username, email: student.email,
-        cohort: student.cohort, startDate: student.startDate, activated: false,
+        cohort: student.cohort, startDate: student.startDate, activated: false, isTest: student.isTest,
       },
       cohortCreated,
       // Solo para el admin, por si el correo no llega: el enlace también va en el correo
@@ -408,7 +409,7 @@ async function getStudentOr404(req, res) {
     ? await get(
       `SELECT id, name, username, email, role, cohort, start_date, id_type, id_number, institution,
               is_active, deactivated_at, deactivation_reason, password_set_at, last_login_at, created_at,
-              reserve_points, exam_score, exam_attempts, is_onboarded
+              reserve_points, exam_score, exam_attempts, is_onboarded, is_test
          FROM students WHERE id = ?`,
       [studentId]
     )
@@ -441,6 +442,7 @@ function studentDto(s) {
     reservePoints: s.reserve_points || 0,
     examScore: s.exam_score ?? null,
     examAttempts: s.exam_attempts || 0,
+    isTest: !!Number(s.is_test),
   };
 }
 
@@ -480,13 +482,15 @@ router.patch('/students/:id', async (req, res) => {
       institution: body.institution !== undefined ? (cleanText(body.institution, 160) || null) : student.institution,
       cohort: body.cohort !== undefined ? cleanText(body.cohort, 80) : student.cohort,
       start_date: body.startDate !== undefined ? optionalDate(body.startDate) : student.start_date,
+      is_test: body.isTest !== undefined ? (body.isTest === true ? 1 : 0) : Number(student.is_test || 0),
     };
     if (!next.name) return res.status(400).json({ error: 'El nombre es requerido.' });
     if (!EMAIL_RE.test(next.email)) return res.status(400).json({ error: 'Un correo electrónico válido es requerido.' });
     if (next.id_type && !ID_TYPES.includes(next.id_type)) return res.status(400).json({ error: `Tipo de documento inválido (${ID_TYPES.join(', ')}).` });
     if (next.start_date === undefined) return res.status(400).json({ error: 'La fecha de inicio individual no es válida (AAAA-MM-DD).' });
 
-    const changed = Object.keys(next).filter((k) => (next[k] ?? null) !== (student[k] ?? null));
+    const current = { ...student, is_test: Number(student.is_test || 0) };
+    const changed = Object.keys(next).filter((k) => (next[k] ?? null) !== (current[k] ?? null));
     if (changed.length === 0) return res.json({ success: true, student: studentDto(student), unchanged: true });
 
     if (changed.includes('email') && await get('SELECT id FROM students WHERE LOWER(email) = ? AND id != ?', [next.email, student.id])) {
@@ -504,8 +508,8 @@ router.patch('/students/:id', async (req, res) => {
 
     const updated = await withTransaction(async (tx) => {
       await tx.run(
-        `UPDATE students SET name = ?, email = ?, id_type = ?, id_number = ?, institution = ?, cohort = ?, start_date = ? WHERE id = ?`,
-        [next.name, next.email, next.id_type, next.id_number, next.institution, next.cohort, next.start_date, student.id]
+        `UPDATE students SET name = ?, email = ?, id_type = ?, id_number = ?, institution = ?, cohort = ?, start_date = ?, is_test = ? WHERE id = ?`,
+        [next.name, next.email, next.id_type, next.id_number, next.institution, next.cohort, next.start_date, next.is_test, student.id]
       );
       await logAdminAction({
         adminId: req.user.id,
@@ -513,14 +517,14 @@ router.patch('/students/:id', async (req, res) => {
         targetType: 'student', targetId: student.id,
         reason: cleanText(body.reason, 500) || null,
         details: {
-          before: Object.fromEntries(changed.map((k) => [k, student[k] ?? null])),
+          before: Object.fromEntries(changed.map((k) => [k, current[k] ?? null])),
           after: Object.fromEntries(changed.map((k) => [k, next[k] ?? null])),
         },
       }, tx);
       return tx.get(
         `SELECT id, name, username, email, role, cohort, start_date, id_type, id_number, institution,
                 is_active, deactivated_at, deactivation_reason, password_set_at, last_login_at, created_at,
-                reserve_points, exam_score, exam_attempts, is_onboarded
+                reserve_points, exam_score, exam_attempts, is_onboarded, is_test
            FROM students WHERE id = ?`,
         [student.id]
       );

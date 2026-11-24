@@ -2612,6 +2612,18 @@ main {
   white-space: nowrap;
 }
 
+/* Estudiante de prueba (Fase 3): no cuenta en estadísticas, actas, CSV ni sellos */
+.test-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(124, 77, 255, 0.14);
+  color: #b39dff;
+  border: 1px solid rgba(124, 77, 255, 0.45);
+}
+
 /* ── Utilidades ──────────────────────────────────────────────────────────────
    Clases que el marcado ya usaba sin estar definidas (sobre todo el panel del admin):
    espaciado, flex/grid, tipografía, bordes y fondos. Van al final para que ganen sobre

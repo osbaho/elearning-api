@@ -18,6 +18,7 @@ import examRoutes from './server/routes/exam.js';
 import adminRoutes from './server/routes/admin.js';
 import adminManagementRoutes from './server/routes/adminManagement.js';
 import adminProgressRoutes from './server/routes/adminProgress.js';
+import adminTestStudentsRoutes from './server/routes/adminTestStudents.js';
 import progressRoutes from './server/routes/progress.js';
 import simulatorRoutes from './server/routes/simulator.js';
 import { COURSE_STEPS } from './server/config/curriculum.js';
@@ -136,6 +137,7 @@ app.use('/api', examRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', adminManagementRoutes);
 app.use('/api/admin', adminProgressRoutes);
+app.use('/api/admin', adminTestStudentsRoutes);
 app.use('/api/progress', progressRoutes);
 app.use('/api/simulator', simulatorRoutes);
 

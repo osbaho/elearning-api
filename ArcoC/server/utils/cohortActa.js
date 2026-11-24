@@ -19,7 +19,7 @@ export async function generateCohortActaPDF(cohortName, res) {
     SELECT id, name, email, id_type, id_number, institution, 
            exam_score, exam_attempts, is_onboarded, start_date, created_at
     FROM students 
-    WHERE COALESCE(cohort, 'Promoción 1') = ? AND role != 'admin'
+    WHERE COALESCE(cohort, 'Promoción 1') = ? AND role != 'admin' AND COALESCE(is_test, 0) = 0
     ORDER BY name ASC
   `, [targetCohort]);
 

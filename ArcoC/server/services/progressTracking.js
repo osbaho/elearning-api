@@ -171,7 +171,7 @@ export async function loadProgressRows(filters = {}, { db = { all }, now = new D
   const { where, params } = studentFilter(filters);
   const students = await db.all(
     `SELECT s.id, s.name, s.email, s.cohort, s.start_date, s.created_at, s.is_active, s.password_set_at,
-            s.last_login_at, s.reserve_points, s.exam_score, s.exam_attempts, c.starts_on, c.ends_on
+            s.last_login_at, s.reserve_points, s.exam_score, s.exam_attempts, s.is_test, c.starts_on, c.ends_on
        FROM students s
        LEFT JOIN cohorts c ON c.name = s.cohort
       WHERE ${where}
@@ -260,6 +260,8 @@ export async function loadProgressRows(filters = {}, { db = { all }, now = new D
       name: st.name,
       email: st.email,
       cohort: st.cohort || 'Promoción 1',
+      // Estudiante de prueba: se lista con su marca, pero no entra en el resumen
+      isTest: !!Number(st.is_test),
       account: { isActive, activated },
       access: { state: accessState, startsOn, endsOn },
       completedSteps,
@@ -280,8 +282,9 @@ export async function loadProgressRows(filters = {}, { db = { all }, now = new D
   });
 }
 
-/** Totales del conjunto filtrado (no solo de la página). */
-export function summarizeRows(rows) {
+/** Totales del conjunto filtrado (no solo de la página). Los estudiantes de prueba no cuentan. */
+export function summarizeRows(allRows) {
+  const rows = allRows.filter((r) => !r.isTest);
   const alertsByCode = {};
   for (const row of rows) {
     for (const alert of row.alerts) alertsByCode[alert.code] = (alertsByCode[alert.code] || 0) + 1;
@@ -292,6 +295,7 @@ export function summarizeRows(rows) {
     certified: rows.filter((r) => r.exam.passed).length,
     withAlerts: rows.filter((r) => r.alerts.length > 0).length,
     alertsByCode,
+    testStudents: allRows.length - rows.length,
   };
 }
 

@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { apiRequest, formatDateTime, formatDay } from '../../../lib/api';
-import { ACTION_LABELS, ACCESS_STATE, EMAIL_STATUS, accountStatus, describeDetails } from './adminLabels';
+import { ALL_STEPS } from '../../../lib/courseConfig';
+import { ACTION_LABELS, ACCESS_STATE, EMAIL_STATUS, accountStatus, describeDetails, stepLabel } from './adminLabels';
 
 function formFromStudent(s) {
   return {
@@ -13,6 +14,7 @@ function formFromStudent(s) {
     institution: s.institution || '',
     cohort: s.cohort || '',
     startDate: s.startDate || '',
+    isTest: !!s.isTest,
     reason: '',
   };
 }
@@ -29,6 +31,9 @@ export default function StudentManageModal({ studentId, cohorts, onClose, onChan
   const [saving, setSaving] = useState(false);
   const [accessLink, setAccessLink] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
+  // Herramientas de prueba: paso destino y correo del estudiante de origen
+  const [jumpStep, setJumpStep] = useState(ALL_STEPS[6] || 'exam');
+  const [copyEmail, setCopyEmail] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -102,6 +107,16 @@ export default function StudentManageModal({ studentId, cohorts, onClose, onChan
     refresh();
   };
 
+  // Solo para estudiantes de prueba: reiniciar, llevar a un paso o copiar el estado de otro
+  const runTestTool = async (tool, body = {}) => {
+    setSaving(true);
+    const res = await apiRequest(`/admin/students/${studentId}/test-tools/${tool}`, { method: 'POST', body });
+    setSaving(false);
+    if (!res.ok) return addToast(res.error, 'error');
+    addToast(res.data.message, 'success');
+    refresh();
+  };
+
   const student = detail?.student;
   const status = student ? accountStatus(student) : null;
   const accessState = detail?.access ? (ACCESS_STATE[detail.access.state] || ACCESS_STATE.open) : null;
@@ -116,6 +131,7 @@ export default function StudentManageModal({ studentId, cohorts, onClose, onChan
               <div className="text-xs text-secondary mt-4 flex items-center gap-8 flex-wrap">
                 <strong>{student.name}</strong> ({student.email})
                 <span className={status.className} id="manage-account-status">{status.label}</span>
+                {student.isTest && <span className="test-badge" id="manage-test-badge">🧪 Estudiante de prueba</span>}
                 {accessState && <span className={accessState.className}>Promoción {accessState.label.toLowerCase()}</span>}
               </div>
             )}
@@ -188,8 +204,48 @@ export default function StudentManageModal({ studentId, cohorts, onClose, onChan
                   <input id="manage-input-reason" className="input text-sm w-full" placeholder="Ej. Corrección de documento solicitada por el estudiante"
                     value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} />
                 </div>
+                <label className="text-xs flex items-center gap-8 mb-12" htmlFor="manage-input-is-test">
+                  <input type="checkbox" id="manage-input-is-test" checked={form.isTest}
+                    onChange={(e) => setForm({ ...form, isTest: e.target.checked })} />
+                  🧪 Estudiante de prueba (no cuenta en estadísticas, actas, CSV ni sellos; su certificado no es verificable)
+                </label>
                 <button type="submit" id="btn-save-student" className="btn btn-primary text-sm" disabled={saving}>Guardar cambios</button>
               </form>
+
+              {/* Herramientas de prueba: solo para cuentas de prueba, cada uso queda en la bitácora */}
+              {student.isTest && (
+                <div className="mb-20 p-12 rounded bg-card border border-amber" id="test-tools">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-amber mb-8">🧪 Herramientas de prueba</h4>
+                  <p className="text-xs text-secondary mb-12">
+                    Para reproducir lo que reporta un estudiante. Cada acción reemplaza el avance de esta cuenta de prueba.
+                  </p>
+                  <div className="flex gap-8 flex-wrap items-center mb-12">
+                    <button id="btn-test-reset" className="btn btn-secondary text-xs px-12 py-6" disabled={saving}
+                      onClick={() => runTestTool('reset')}>
+                      ↺ Reiniciar (como recién matriculado)
+                    </button>
+                  </div>
+                  <div className="flex gap-8 flex-wrap items-center mb-12">
+                    <select id="test-jump-step" className="input text-xs" value={jumpStep} onChange={(e) => setJumpStep(e.target.value)}
+                      aria-label="Paso al que llevar al estudiante de prueba">
+                      {ALL_STEPS.map((step) => <option key={step} value={step}>{stepLabel(step)}</option>)}
+                      <option value="exam">Examen final (malla completa)</option>
+                    </select>
+                    <button id="btn-test-jump" className="btn btn-secondary text-xs px-12 py-6" disabled={saving}
+                      onClick={() => runTestTool('jump', { stepId: jumpStep })}>
+                      ⤳ Llevar a este paso
+                    </button>
+                  </div>
+                  <div className="flex gap-8 flex-wrap items-center">
+                    <input id="test-copy-email" type="email" className="input text-xs flex-1" placeholder="Correo del estudiante a copiar"
+                      value={copyEmail} onChange={(e) => setCopyEmail(e.target.value)} />
+                    <button id="btn-test-copy" className="btn btn-secondary text-xs px-12 py-6" disabled={saving || !copyEmail.trim()}
+                      onClick={() => runTestTool('copy-from', { sourceEmail: copyEmail.trim() })}>
+                      ⎘ Copiar su estado
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Acceso */}
               <div className="mb-20 p-12 rounded bg-card border">

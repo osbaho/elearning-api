@@ -35,6 +35,9 @@ export const ACTION_LABELS = {
   'email.resend_induction': 'Reenvió la guía de inducción',
   'email.reminder': 'Envió un recordatorio',
   'email.retry': 'Reintentó un correo',
+  'test.reset': 'Reinició al estudiante de prueba',
+  'test.jump': 'Llevó al estudiante de prueba a un paso',
+  'test.copy_from': 'Copió a la cuenta de prueba el estado de otro estudiante',
 };
 
 export const EMAIL_STATUS = {
@@ -104,5 +107,7 @@ export function describeDetails(details) {
     return `${details.created.length} creados, ${(details.skipped || []).length} omitidos`;
   }
   if (details.purpose) return details.purpose === 'activation' ? 'Activación de cuenta' : 'Restablecer contraseña';
+  if (details.stepId) return `Paso ${details.stepId} (${details.completedSteps} completados)`;
+  if (details.sourceEmail) return `Desde ${details.sourceEmail}: ${details.steps} pasos, ${details.attempts} partidas`;
   return '';
 }
