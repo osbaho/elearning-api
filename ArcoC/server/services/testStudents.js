@@ -76,7 +76,7 @@ export async function copyStudentState(tx, sourceId, targetId) {
 
   const attempts = await tx.all(
     `SELECT step_id, scene, phase, status, started_at, completed_at, score, max_score, passed, error_count,
-            dose_msv, time_seconds, tier, points_awarded, voided_at, voided_by_admin_id, void_reason
+            dose_msv, time_seconds, tier, points_awarded, voided_at, voided_by_admin_id, void_reason, error_detail
        FROM simulator_attempts WHERE student_id = ?`,
     [sourceId]
   );
@@ -84,11 +84,11 @@ export async function copyStudentState(tx, sourceId, targetId) {
     await tx.run(
       `INSERT INTO simulator_attempts (id, student_id, step_id, scene, phase, status, started_at, completed_at, score,
                                        max_score, passed, error_count, dose_msv, time_seconds, tier, points_awarded,
-                                       voided_at, voided_by_admin_id, void_reason)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                       voided_at, voided_by_admin_id, void_reason, error_detail)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [crypto.randomUUID(), targetId, a.step_id, a.scene, a.phase, a.status, a.started_at, a.completed_at, a.score,
         a.max_score, a.passed, a.error_count, a.dose_msv, a.time_seconds, a.tier, a.points_awarded,
-        a.voided_at, a.voided_by_admin_id, a.void_reason]
+        a.voided_at, a.voided_by_admin_id, a.void_reason, a.error_detail]
     );
   }
 

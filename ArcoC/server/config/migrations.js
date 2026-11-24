@@ -335,4 +335,12 @@ export const MIGRATIONS = [
       await db.addColumnIfMissing('students', 'exam_bonus_attempts', 'INTEGER DEFAULT 0');
     },
   },
+  {
+    version: 7,
+    name: 'detalle_de_errores',
+    // Fase 4: qué hizo mal el estudiante en cada partida y en qué segundo (lo envía Unity).
+    async up(db) {
+      await db.addColumnIfMissing('simulator_attempts', 'error_detail', 'TEXT');
+    },
+  },
 ];

@@ -1977,7 +1977,8 @@ namespace CArmSimulator.UI
                 passed = minigame != null && minigame.Passed,
                 errorCount = minigame != null ? minigame.ErrorCount : 0,
                 doseMsv = doseMsv,
-                timeSeconds = minigame != null ? minigame.ElapsedTime : 0f
+                timeSeconds = minigame != null ? minigame.ElapsedTime : 0f,
+                errors = minigame != null ? minigame.GetErrorLog() : null
             });
             return true;
         }

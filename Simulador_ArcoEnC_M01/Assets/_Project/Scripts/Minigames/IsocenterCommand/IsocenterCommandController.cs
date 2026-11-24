@@ -437,7 +437,8 @@ namespace CArmSimulator.Minigames.IsocenterCommand
                 }
 
                 failedAttemptsCount++;
-                RecordError(Mathf.Abs(PENALTY_AMBIGUOUS_ORDER));
+                RecordError(Mathf.Abs(PENALTY_AMBIGUOUS_ORDER), "IC_AMBIGUOUS_ORDER",
+                    $"Orden verbal ambigua: {string.Join(" + ", trapNames)}.");
                 AudioSFXManager.Instance?.PlayWarningScatter();
                 DeductStar($"Opción ambigua: {string.Join(" + ", trapNames)}");
 
@@ -522,7 +523,8 @@ namespace CArmSimulator.Minigames.IsocenterCommand
                 else
                 {
                     failedAttemptsCount++;
-                    RecordError(Mathf.Abs(PENALTY_FAILED_SHOT));
+                    RecordError(Mathf.Abs(PENALTY_FAILED_SHOT), "IC_FAILED_SHOT",
+                        "Disparo fallido por una orden verbal inexacta.");
                     AudioSFXManager.Instance?.PlayWarningScatter();
                     DeductStar("Disparo fallido por orden verbal inexacta.");
                     OnOrderEvaluated?.Invoke(built, false, feedback);
@@ -757,7 +759,8 @@ namespace CArmSimulator.Minigames.IsocenterCommand
                 else
                 {
                     failedAttemptsCount++;
-                    RecordError(Mathf.Abs(PENALTY_BAD_ROTATION));
+                    RecordError(Mathf.Abs(PENALTY_BAD_ROTATION), "IC_BAD_ROTATION",
+                        "Rotación de 90° fuera del isocentro: el hueso salió de la imagen.");
                     AudioSFXManager.Instance?.PlayWarningScatter();
                     DeductStar("Rotación de 90° fuera del isocentro (el hueso salió de la pantalla).");
                     OnOrbitalRotationEvaluated?.Invoke(false, ISOCENTER_FAILED_FEEDBACK);

@@ -300,6 +300,8 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
           errorCount: data.errorCount,
           doseMsv: data.doseMsv,
           timeSeconds: data.timeSeconds,
+          // Detalle de cada error (qué y cuándo); los builds anteriores no lo envían
+          ...(Array.isArray(data.errors) ? { errors: data.errors.slice(0, 50) } : {}),
         });
       }
     };

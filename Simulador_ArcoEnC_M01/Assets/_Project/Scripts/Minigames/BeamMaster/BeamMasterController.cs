@@ -180,7 +180,8 @@ namespace CArmSimulator.Minigames.BeamMaster
             if (thermalModel.IsOverheated && !wasBlocked)
             {
                 StopFluoroscopy();
-                RecordError(Mathf.Abs(PENALTY_OVERHEAT));
+                RecordError(Mathf.Abs(PENALTY_OVERHEAT), "BM_ANODE_OVERHEAT",
+                    "Sobrecalentó el ánodo del tubo: la exposición se bloqueó.");
                 AudioSFXManager.Instance?.PlayWarningScatter();
                 OnAnodeOverheatStateChanged?.Invoke(true, FEEDBACK_ANODE_OVERHEAT);
                 Debug.LogWarning("[BeamMaster] Anode overheated! Exposure blocked.");
@@ -399,7 +400,8 @@ namespace CArmSimulator.Minigames.BeamMaster
                 else
                 {
                     failedAttemptsCount++;
-                    RecordError(5);
+                    RecordError(5, "BM_EXPOSURE_SUBOPTIMAL",
+                        $"Exposición no óptima en el caso {evaluatedCaseIndex + 1} (kVp, mA o colimación inadecuados).");
                 }
             }
 
