@@ -8,6 +8,8 @@ import { MAX_RESERVE_POINTS, clampToReserveCap } from '../config/reservePoints.j
 // (E-3) intentos, (E-4) costo del comodín fijado en el servidor — nunca del cliente
 import { WILDCARD_COST, MAX_EXAM_ATTEMPTS, EXAM_QUESTION_COUNT, isExamPassingScore } from '../config/examRules.js';
 import { pickExamQuestionIds, parseQuestionIds } from '../services/examQuestions.js';
+// Modo revisión: el admin recorre el curso, pero no presenta el examen
+import { rejectPreviewUser } from '../services/preview.js';
 
 const router = express.Router();
 
@@ -62,7 +64,7 @@ async function getOpenAttempt(studentId, db = { get }) {
 
 // GET /api/questions — preguntas del intento en curso. El set lo fija /start-exam, así que
 // no se pueden ver preguntas sin consumir un intento y recargar la página no las cambia.
-router.get('/questions', authenticateToken, async (req, res) => {
+router.get('/questions', authenticateToken, rejectPreviewUser, async (req, res) => {
   try {
     const { id: studentId } = req.user;
 
@@ -143,7 +145,7 @@ router.post('/add-points', authenticateToken, async (req, res) => {
 });
 
 // POST /api/use-wildcard
-router.post('/use-wildcard', authenticateToken, requireOpenAccess, async (req, res) => {
+router.post('/use-wildcard', authenticateToken, rejectPreviewUser, requireOpenAccess, async (req, res) => {
   try {
     const { question_id } = req.body; // E-4: `cost` ignorado — siempre se usa WILDCARD_COST
     const { id: studentId } = req.user;
@@ -213,7 +215,7 @@ router.post('/use-wildcard', authenticateToken, requireOpenAccess, async (req, r
 });
 
 // POST /api/submit-exam
-router.post('/submit-exam', authenticateToken, requireOpenAccess, async (req, res) => {
+router.post('/submit-exam', authenticateToken, rejectPreviewUser, requireOpenAccess, async (req, res) => {
   try {
     const { answers } = req.body;
     const { id: studentId } = req.user;
@@ -349,7 +351,7 @@ router.get('/certificate', authenticateToken, async (req, res) => {
 });
 
 // POST /api/start-exam
-router.post('/start-exam', authenticateToken, requireOpenAccess, async (req, res) => {
+router.post('/start-exam', authenticateToken, rejectPreviewUser, requireOpenAccess, async (req, res) => {
   try {
     const { id: studentId } = req.user;
 

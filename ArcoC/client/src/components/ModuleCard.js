@@ -27,6 +27,8 @@ export default function ModuleCard({
   pdfLink,
   tourClass,
   pdfTourClass,
+  // Modo revisión del admin: el video se puede adelantar y no registra inicio ni visto
+  preview = false,
 }) {
   const hasScore = scoreInfo !== null && scoreInfo !== undefined;
   const status = statusOverride
@@ -66,9 +68,9 @@ export default function ModuleCard({
           <VideoPlayer
             src={videoSrc}
             moduleKey={moduleKey}
-            isCompleted={isCompleted}
-            onComplete={onComplete}
-            onStart={onStart}
+            isCompleted={isCompleted || preview}
+            onComplete={preview ? undefined : onComplete}
+            onStart={preview ? undefined : onStart}
           />
         </div>
       )}
