@@ -78,10 +78,16 @@ test.describe('Examen final: integridad del intento, errores visibles y proctori
     await resetStudentState(page.request, { email: 'student@test.com', exam_attempts: 3 });
     await performLogin(page, 'student@test.com', 'student123', false);
 
+    // La página lo explica antes de intentarlo: motivo visible y botón deshabilitado
     await page.goto('/course/exam?skipCamera=true');
-    await page.click('#start-exam-btn');
-    await expect(page.locator('#exam-start-error')).toContainText('límite máximo de 3 intentos');
+    await expect(page.locator('#exam-attempts-status')).toContainText('Ya usaste tus 3 intentos');
+    await expect(page.locator('#start-exam-btn')).toBeDisabled();
     await expect(page.locator('#exam-main-screen')).toHaveCount(0);
+
+    // Y la API lo rechaza igual si alguien se salta la interfaz
+    const start = await page.request.post(`${API}/start-exam`);
+    expect(start.status()).toBe(403);
+    expect((await start.json()).error).toContain('límite máximo de 3 intentos');
   });
 
   test('Proctoring en servidor: suspende sin rostro, cierra el intento y no castiga al terminar', async ({ page }) => {

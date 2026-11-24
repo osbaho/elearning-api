@@ -29,6 +29,9 @@ services:
       NODE_ENV: production
       PORT: 5000
       DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-carm_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-carm_master}}
+      # El Postgres de este compose no usa SSL (red interna). Con una base externa usa
+      # DATABASE_SSL=require (o sslmode en DATABASE_URL). Ver DOCUMENTATION.md, sección 12.
+      DATABASE_SSL: ${DATABASE_SSL:-disable}
       JWT_SECRET: ${JWT_SECRET}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}

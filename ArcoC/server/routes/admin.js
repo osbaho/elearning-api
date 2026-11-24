@@ -7,6 +7,7 @@ import { generateCertificatePDF } from '../utils/certificate.js';
 import { generateCohortActaPDF } from '../utils/cohortActa.js';
 import { sendWelcomeInductionEmail, sendProgressReminderEmail } from '../services/emailService.js';
 import { TOTAL_COURSE_STEPS, isCourseStep, countCompletedCourseSteps } from '../config/curriculum.js';
+import { EXAM_PASS_SCORE_PERCENT, EXAM_QUESTION_COUNT, MAX_EXAM_ATTEMPTS, isExamPassingScore } from '../config/examRules.js';
 
 const router = express.Router();
 
@@ -26,22 +27,25 @@ async function checkAdmin(req, res, next) {
 // GET /api/admin/cohorts — Agrupación, métricas y sellos criptográficos por promoción
 router.get('/cohorts', authenticateToken, checkAdmin, async (req, res) => {
   try {
+    // CAST(... AS NUMERIC): en PostgreSQL ROUND(x, 2) solo existe para NUMERIC (AVG de REAL
+    // devuelve double precision); en SQLite el CAST no cambia el resultado.
+    // cc.* va en el GROUP BY porque PostgreSQL exige agrupar toda columna no agregada.
     const rows = await all(`
-      SELECT 
+      SELECT
         COALESCE(s.cohort, 'Promoción 1') as name,
         COUNT(*) as total_students,
-        SUM(CASE WHEN s.exam_score >= 90 THEN 1 ELSE 0 END) as certified_students,
-        SUM(CASE WHEN s.exam_score IS NULL OR s.exam_score < 90 THEN 1 ELSE 0 END) as in_progress_students,
-        ROUND(AVG(CASE WHEN s.exam_score IS NOT NULL THEN s.exam_score ELSE NULL END), 2) as avg_score,
+        SUM(CASE WHEN s.exam_score >= ? THEN 1 ELSE 0 END) as certified_students,
+        SUM(CASE WHEN s.exam_score IS NULL OR s.exam_score < ? THEN 1 ELSE 0 END) as in_progress_students,
+        ROUND(CAST(AVG(s.exam_score) AS NUMERIC), 2) as avg_score,
         SUM(COALESCE(s.proctoring_incidents, 0) + COALESCE(s.focus_violations, 0)) as total_incidents,
         cc.closed_at,
         cc.cohort_seal_hash
       FROM students s
       LEFT JOIN cohort_closures cc ON cc.cohort_name = COALESCE(s.cohort, 'Promoción 1')
       WHERE s.role != 'admin'
-      GROUP BY COALESCE(s.cohort, 'Promoción 1')
+      GROUP BY COALESCE(s.cohort, 'Promoción 1'), cc.closed_at, cc.cohort_seal_hash
       ORDER BY name ASC
-    `);
+    `, [EXAM_PASS_SCORE_PERCENT, EXAM_PASS_SCORE_PERCENT]);
 
     res.json({ 
       success: true, 
@@ -307,28 +311,28 @@ router.get('/compliance/:studentId', authenticateToken, checkAdmin, async (req, 
 
     // 3. Rendimiento Académico en Examen de Certificación
     const score = student.exam_score;
-    const c3_met = score !== null && score >= 90;
+    const c3_met = isExamPassingScore(score);
     const c3 = {
       code: 'STD_EXAM_SCORE',
       title: 'Aprobación de Evaluación Oficial de Certificación',
-      required: 'Calificación final mínima del 90% (45/50 preguntas reglamentarias).',
+      required: `Calificación final mínima del ${EXAM_PASS_SCORE_PERCENT}% (intentos de ${EXAM_QUESTION_COUNT} preguntas aleatorias del banco oficial).`,
       met: c3_met,
       status: c3_met ? 'APROBADO' : (score !== null ? 'REPROBADO' : 'PENDIENTE'),
-      details: score !== null 
-        ? `Calificación obtenida: ${score}% (Umbral reglamentario: ≥90%)` 
+      details: score !== null
+        ? `Calificación obtenida: ${score}% (Umbral reglamentario: ≥${EXAM_PASS_SCORE_PERCENT}%)`
         : 'Examen de certificación no ha sido presentado aún.'
     };
 
     // 4. Límite Reglamentario de Intentos
     const attempts = student.exam_attempts || 0;
-    const c4_met = attempts <= 3;
+    const c4_met = attempts <= MAX_EXAM_ATTEMPTS;
     const c4 = {
       code: 'STD_MAX_ATTEMPTS',
       title: 'Límite de Oportunidades Evaluativas',
-      required: 'Máximo 3 intentos de examen permitidos según reglamento institucional IES.',
+      required: `Máximo ${MAX_EXAM_ATTEMPTS} intentos de examen permitidos según reglamento institucional IES.`,
       met: c4_met,
       status: c4_met ? 'DENTRO DEL LÍMITE' : 'EXCEDIDO',
-      details: `${attempts} de máximo 3 intentos permitidos utilizados.`
+      details: `${attempts} de máximo ${MAX_EXAM_ATTEMPTS} intentos permitidos utilizados.`
     };
 
     // 5. Integridad Académica y Tolerancia de Supervisión (Proctoring)
@@ -462,7 +466,7 @@ router.get('/export-audit', authenticateToken, checkAdmin, async (req, res) => {
       'Institución Hospitalaria',
       'Promoción (Cohorte)',
       'Fecha Habilitada Acceso',
-      'Pasos Curriculares (de 25)',
+      `Pasos Curriculares (de ${TOTAL_COURSE_STEPS})`,
       'Nota Examen (%)',
       'Intentos Examen',
       'Incidentes de Supervisión',
@@ -478,7 +482,7 @@ router.get('/export-audit', authenticateToken, checkAdmin, async (req, res) => {
       const steps = stepCounts[r.id] || 0;
       const score = r.exam_score !== null ? r.exam_score : 'Pendiente';
       const incidents = (r.proctoring_incidents || 0) + (r.focus_violations || 0);
-      const isCertified = (r.exam_score ?? 0) >= 90 && steps >= TOTAL_COURSE_STEPS && !!r.is_onboarded;
+      const isCertified = isExamPassingScore(r.exam_score) && steps >= TOTAL_COURSE_STEPS && !!r.is_onboarded;
       const cumpleEstandar = isCertified ? 'SI (Aprobado)' : 'NO (En Proceso / No Cumple)';
 
       const values = [
@@ -564,7 +568,7 @@ router.post('/cohorts/:cohort/close', authenticateToken, checkAdmin, async (req,
       ORDER BY id ASC
     `, [cohortName]);
 
-    const certifiedCount = students.filter(s => (s.exam_score ?? 0) >= 90 && s.is_onboarded).length;
+    const certifiedCount = students.filter(s => isExamPassingScore(s.exam_score) && s.is_onboarded).length;
     const sealData = students.map(s => `${s.id}:${s.name}:${s.exam_score || 'NA'}:${s.is_onboarded}`).join('||');
     const sealHash = crypto.createHash('sha256').update(sealData + `||${cohortName}||${Date.now()}`).digest('hex');
     const nowIso = new Date().toISOString();

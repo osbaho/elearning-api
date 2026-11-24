@@ -589,6 +589,17 @@ main {
   color: var(--accent-green);
 }
 
+.status-danger {
+  background: rgba(255, 23, 68, 0.15);
+  color: var(--accent-red);
+}
+
+/* Paso que le toca al estudiante (botón "Continuar donde quedé") */
+.card-current {
+  border-color: var(--accent-cyan);
+  box-shadow: var(--shadow-glow);
+}
+
 .text-muted {
   color: var(--text-muted);
 }

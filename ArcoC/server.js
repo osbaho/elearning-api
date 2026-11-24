@@ -10,7 +10,7 @@ import * as cookie from 'cookie';
 
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
-import { initDb, run, get, saveDb, getPgPool } from './server/config/db.js';
+import { initDb, run, get, closeDb, getPgPool, getSchemaVersion } from './server/config/db.js';
 import { globalLimiter } from './server/middleware/rateLimiter.js';
 
 import authRoutes from './server/routes/auth.js';
@@ -65,7 +65,10 @@ app.get(['/health', '/api/health'], (req, res) => {
     status: 'healthy',
     uptime: Math.round(process.uptime()),
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    database: getPgPool() ? 'postgresql' : 'sqlite',
+    // Última migración aplicada: permite comprobar tras un despliegue que el esquema está al día
+    schemaVersion: getSchemaVersion()
   });
 });
 
@@ -170,7 +173,10 @@ if (process.env.NODE_ENV !== 'production') {
         // Opcional para pruebas: marcar curso completo
         if (req.body?.complete_course) {
           for (const step of COURSE_STEPS) {
-            await run('INSERT OR IGNORE INTO course_progress (student_id, module_id, status) VALUES (?, ?, ?)', [student.id, step, 'completed']);
+            await run(
+              'INSERT INTO course_progress (student_id, module_id, status) VALUES (?, ?, ?) ON CONFLICT (student_id, module_id) DO NOTHING',
+              [student.id, step, 'completed']
+            );
           }
         }
 
@@ -360,19 +366,12 @@ function gracefulShutdown(signal) {
   if (runningServer) {
     runningServer.close(() => {
       console.log('✅ HTTP server closed.');
-      const pgPool = getPgPool();
-      if (pgPool) {
-        pgPool.end(() => {
-          console.log('✅ PostgreSQL pool closed.');
-          process.exit(0);
-        });
-      } else {
-        // Persist SQLite to disk before exiting (M-01)
-        saveDb().then(() => {
-          console.log('✅ SQLite database saved to disk.');
-          process.exit(0);
-        }).catch(() => process.exit(0));
-      }
+      const engine = getPgPool() ? 'PostgreSQL pool closed' : 'SQLite database saved to disk';
+      // M-01: cierra el pool de PostgreSQL o escribe SQLite en disco antes de salir
+      closeDb()
+        .then(() => console.log(`✅ ${engine}.`))
+        .catch((err) => console.error('❌ Error closing database:', err))
+        .finally(() => process.exit(0));
     });
   } else {
     process.exit(0);

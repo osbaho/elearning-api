@@ -22,6 +22,9 @@ export const COURSE_STEPS = Object.freeze([
 
 export const TOTAL_COURSE_STEPS = COURSE_STEPS.length;
 
+/** Número de módulos de la malla (prefijo m<n> de cada paso). */
+export const COURSE_MODULE_COUNT = new Set(COURSE_STEPS.map((step) => step.split('_')[0])).size;
+
 const PRACTICE_STEP_PATTERN = /^m\d+_s\d+$/;
 
 export const PRACTICE_STEPS = Object.freeze(

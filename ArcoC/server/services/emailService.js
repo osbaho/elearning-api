@@ -1,5 +1,7 @@
-import { run, get, all } from '../config/db.js';
-import { TOTAL_COURSE_STEPS } from '../config/curriculum.js';
+import { run } from '../config/db.js';
+import { TOTAL_COURSE_STEPS, COURSE_MODULE_COUNT } from '../config/curriculum.js';
+import { EXAM_QUESTION_COUNT, EXAM_PASS_SCORE_PERCENT, MAX_EXAM_ATTEMPTS } from '../config/examRules.js';
+import { MAX_RESERVE_POINTS } from '../config/reservePoints.js';
 
 /**
  * Servicio de mensajería y notificaciones institucionales de C-Arm Master.
@@ -66,17 +68,17 @@ export function buildInductionEmailHtml({ name, email, cohort, startDate, tempPa
 
         <div class="step-item">
           <div class="step-num">2</div>
-          <div class="step-text"><strong>Ruta de Aprendizaje Secuencial:</strong> El curso consta de 5 módulos obligatorios (25 pasos: historia/física, scatter ALARA, geometría robótica 8-DoF, proyecciones de miembro inferior y superior/columna). Los videos cuentan con protección anti-adelanto y PDFs de descarga.</div>
+          <div class="step-text"><strong>Ruta de Aprendizaje Secuencial:</strong> El curso consta de ${COURSE_MODULE_COUNT} módulos obligatorios (${TOTAL_COURSE_STEPS} pasos entre videos y minijuegos: historia/física, scatter ALARA, geometría robótica 8-DoF, proyecciones de miembro inferior y superior/columna). Los videos cuentan con protección anti-adelanto y PDFs de descarga.</div>
         </div>
 
         <div class="step-item">
           <div class="step-num">3</div>
-          <div class="step-text"><strong>Minijuegos en Simulador y Puntos de Reserva:</strong> Cada práctica de posicionamiento virtual te otorga <em>Puntos de Reserva ⚡</em> (hasta 500 pts) que podrás usar como comodín en el examen final.</div>
+          <div class="step-text"><strong>Minijuegos en Simulador y Puntos de Reserva:</strong> Cada práctica de posicionamiento virtual te otorga <em>Puntos de Reserva ⚡</em> (hasta ${MAX_RESERVE_POINTS} pts) que podrás usar como comodín en el examen final.</div>
         </div>
 
         <div class="step-item">
           <div class="step-num">4</div>
-          <div class="step-text"><strong>Evaluación Final (Reglamentaria):</strong> Al completar el 100% de los módulos, se desbloqueará el examen de 50 preguntas. Se exige un mínimo de <strong>90% de aprobación</strong> y máximo <strong>3 intentos</strong> para certificar.</div>
+          <div class="step-text"><strong>Evaluación Final (Reglamentaria):</strong> Al completar el 100% de los módulos, se desbloqueará el examen (${EXAM_QUESTION_COUNT} preguntas por intento). Se exige un mínimo de <strong>${EXAM_PASS_SCORE_PERCENT}% de aprobación</strong> y máximo <strong>${MAX_EXAM_ATTEMPTS} intentos</strong> para certificar.</div>
         </div>
 
         <div class="step-item">
@@ -117,9 +119,9 @@ CREDENCIALES DE ACCESO:
 
 GUÍA RÁPIDA DE INICIO (ESTÁNDAR DE CERTIFICACIÓN):
 1. Enrolamiento Biométrico: Registra tu documento institucional y captura tu rostro para supervisión con IA.
-2. Secuencia Curricular: Completa los 5 módulos (25 pasos teóricos y prácticos en orden).
+2. Secuencia Curricular: Completa los ${COURSE_MODULE_COUNT} módulos (${TOTAL_COURSE_STEPS} pasos teóricos y prácticos en orden).
 3. Puntos de Reserva: Realiza las prácticas en el simulador para acumular puntos comodín.
-4. Examen Final: Aprueba con mínimo 90% (máximo 3 intentos).
+4. Examen Final: Aprueba con mínimo ${EXAM_PASS_SCORE_PERCENT}% (${EXAM_QUESTION_COUNT} preguntas por intento, máximo ${MAX_EXAM_ATTEMPTS} intentos).
 5. Certificado Oficial: Descarga tu certificación con QR y validación criptográfica ante IES.
 
 Ingresa a: ${loginUrl}
