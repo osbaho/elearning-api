@@ -1,0 +1,11 @@
+# Contexto de build de docker-compose.yml (ArcoC/).
+# Las dependencias se instalan en la imagen con npm ci; nunca se copian las del host.
+**/node_modules
+# Salida de next build en el host (incluye .next/cache).
+client/.next
+# Secretos y datos locales: los secretos llegan en tiempo de ejecución desde docker-compose.yml.
+**/.env*
+**/*.sqlite
+# Resultados de las pruebas E2E.
+test-results
+playwright-report

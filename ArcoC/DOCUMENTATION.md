@@ -81,6 +81,7 @@ ArcoC/
 ├── docker-compose.yml             # Orquestación de contenedores
 ├── Dockerfile.backend             # Imagen de producción Express
 ├── Dockerfile.frontend            # Imagen de producción Next.js
+├── .dockerignore                  # Lo que no entra al contexto de build de Docker
 ├── playwright.config.js           # Configuración de pruebas E2E
 ├── .env.example                   # Plantilla de variables de entorno backend
 │
@@ -580,16 +581,17 @@ JWT_SECRET=<el mismo valor que el backend> # Obligatorio: src/proxy.js valida la
 Sin el mismo `JWT_SECRET`, el proxy de Next rechaza la cookie: toda ruta protegida redirige a `/login` y el contenido del curso (videos, build WebGL, PDF, imágenes) responde `401`, aunque el login responda 200. Si la variable falta, el proxy registra un error y rechaza todo; ya no usa un secreto de respaldo. En Docker, `docker-compose.yml` se lo pasa al servicio `frontend` en tiempo de ejecución.
 
 ### 3. Docker Compose
-El archivo [`docker-compose.yml`](file:///c:/Oscar/ArcoC/docker-compose.yml) compila e interconecta:
-* **carm-backend:** Basado en `Dockerfile.backend` (Node.js Alpine).
-* **carm-frontend:** Basado en `Dockerfile.frontend` (Next.js multi-stage build optimizado).
+El archivo [`docker-compose.yml`](file:///c:/Oscar/ArcoC/docker-compose.yml) compila e interconecta, con `ArcoC/` como contexto de build:
+* **carm-backend:** basado en `Dockerfile.backend` (Node.js Alpine). Instala solo las dependencias de producción del backend con `npm ci --omit=dev --workspaces=false`: el workspace `client` queda fuera aunque `client/` llegue al contexto.
+* **carm-frontend:** basado en `Dockerfile.frontend`, un build multi-etapa de Next.js. Instala el workspace con `npm ci --workspace=client` desde el `package-lock.json` de `ArcoC/`, el mismo que usan el desarrollo y las pruebas E2E. La salida `standalone` conserva la estructura del workspace (raíz en `/app`, la app en `client/`), así que la imagen arranca con `node client/server.js`.
+* **`.dockerignore`:** deja fuera del contexto los `node_modules` y el `.next` del host, los `.env*` y las bases SQLite. Las dependencias se instalan dentro de la imagen y los secretos llegan en tiempo de ejecución.
 
 ### 4. Healthchecks y Graceful Shutdown
 * Rutas `/health` y `/api/health` disponibles para balanceadores de carga y sondas de liveness/readiness.
 * El proceso captura señales `SIGTERM` y `SIGINT`, cerrando las conexiones HTTP, limpiando los sockets activos de proctoring y forzando la sincronización de la base de datos SQLite a disco antes de finalizar.
 
 ### 5. Contenido Multimedia y Build WebGL del Simulador
-Los videos definitivos y el build de Unity son artefactos pesados: **no se versionan en git** (ver `.gitignore`) y se generan localmente antes de construir la imagen del frontend. `Dockerfile.frontend` copia `client/` completo, así que quedan incluidos en la imagen y Next.js los sirve desde el mismo origen que la plataforma, solo a estudiantes con sesión y con caché privada (ver sección 11).
+Los videos definitivos y el build de Unity son artefactos pesados: **no se versionan en git** (ver `.gitignore`) y se generan localmente antes de construir la imagen del frontend. `Dockerfile.frontend` copia `client/` (`.dockerignore` solo excluye `node_modules`, `.next` y los `.env*`), así que quedan incluidos en la imagen y Next.js los sirve desde el mismo origen que la plataforma, solo a estudiantes con sesión y con caché privada (ver sección 11).
 
 * **Videos** (`client/public/videos/moduloN/`): requieren `ffmpeg` (`winget install Gyan.FFmpeg`).
   ```powershell
@@ -608,23 +610,16 @@ Los videos definitivos y el build de Unity son artefactos pesados: **no se versi
 ### 6. Dependencias npm y Alertas de Seguridad (Dependabot)
 Versiones clave: **Next.js 16.4.6** (con `eslint-config-next` 16.4.6) y **React 19.2.8**. En Next 16, la versión 16.4.1 corrige las alertas críticas y altas, y la 16.4.5 las moderadas. La serie 16.3 no recibió esos parches: su última versión, la 16.3.8, sigue afectada.
 
-GitHub (Dependabot) revisa **tres** lockfiles en `ArcoC/`, y cada uno se instala por separado:
+GitHub (Dependabot) revisa **dos** lockfiles en `ArcoC/`, y cada uno se instala por separado:
 
 | Lockfile | Lo usa | Contenido |
 | :--- | :--- | :--- |
-| `package-lock.json` | `npm install` en `ArcoC/` (desarrollo y pruebas E2E) y `Dockerfile.backend` | Backend Express y el workspace `client` |
-| `client/package-lock.json` | `Dockerfile.frontend`, que instala `client/` por su cuenta | Solo el frontend Next.js |
+| `package-lock.json` | `npm install` en `ArcoC/` (desarrollo y pruebas E2E), `Dockerfile.backend` y `Dockerfile.frontend` | Backend Express y el workspace `client` (frontend Next.js) |
 | `public/documents/package-lock.json` | `convert.js` (compilación de las lecturas a PDF) | `md-to-pdf` y `puppeteer` |
 
-* **Al cambiar una dependencia del cliente, actualiza los dos primeros.** Dentro de `client/`, npm trabaja sobre el workspace raíz (`npm prefix` devuelve `ArcoC/`), así que `client/package-lock.json` se regenera desde una copia aislada (comandos desde `ArcoC/`):
-  ```powershell
-  $tmp = New-Item -ItemType Directory -Force (Join-Path $env:TEMP "client-lock")
-  Copy-Item client\package.json, client\package-lock.json $tmp
-  Push-Location $tmp; npm install --package-lock-only --ignore-scripts; npm audit --package-lock-only; Pop-Location
-  Copy-Item (Join-Path $tmp "package-lock.json") client\package-lock.json
-  ```
-* **`node-fetch` forzado a `^2.7.0`** mediante `overrides`, declarado en `package.json` **y** en `client/package.json`, porque npm solo aplica los `overrides` del `package.json` raíz de cada instalación. `face-api.js` 0.22.2 (sin mantenimiento) depende de `@tensorflow/tfjs-core` 1.7.0, que fija `node-fetch ~2.1.2`, versión vulnerable. En el navegador tfjs no carga `node-fetch` y en Node usa el `fetch` nativo. No apliques `npm audit fix --force`, que propone bajar `face-api.js` a 0.20.0. Retira el override si se migra a un fork mantenido.
-* **Revisión periódica:** `npm audit` en `ArcoC/`, en la copia aislada de `client/` y en `public/documents/` (`npm audit --package-lock-only`). Prefiere `npm audit fix` y versiones menores o de parche. Antes de un salto mayor, lee sus notas; para Next, la guía de `node_modules/next/dist/docs/` (ver `client/AGENTS.md`).
+* **El frontend no tiene lockfile propio.** `client/` es un workspace: sus dependencias se instalan y actualizan desde `ArcoC/` (por ejemplo, `npm install <paquete> --workspace=client`), y `Dockerfile.frontend` las instala del mismo lockfile con `npm ci --workspace=client`. Dentro de `client/`, npm también trabaja sobre el workspace raíz (`npm prefix` devuelve `ArcoC/`).
+* **`node-fetch` forzado a `^2.7.0`** mediante `overrides` en el `package.json` de `ArcoC/`. npm solo aplica los `overrides` del `package.json` raíz, que cubren también al workspace `client`. `face-api.js` 0.22.2 (sin mantenimiento) depende de `@tensorflow/tfjs-core` 1.7.0, que fija `node-fetch ~2.1.2`, versión vulnerable. En el navegador tfjs no carga `node-fetch` y en Node usa el `fetch` nativo. No apliques `npm audit fix --force`, que propone bajar `face-api.js` a 0.20.0. Retira el override si se migra a un fork mantenido.
+* **Revisión periódica:** `npm audit` en `ArcoC/` y en `public/documents/` (`npm audit --package-lock-only`). Prefiere `npm audit fix` y versiones menores o de parche. Antes de un salto mayor, lee sus notas; para Next, la guía de `node_modules/next/dist/docs/` (ver `client/AGENTS.md`).
 
 ---
 
