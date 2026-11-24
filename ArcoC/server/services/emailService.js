@@ -4,6 +4,7 @@ import { MAX_RESERVE_POINTS } from '../config/reservePoints.js';
 import { appUrl } from '../config/appUrls.js';
 import { queueEmail } from './mailer.js';
 import { formatDate } from './access.js';
+import { getSimulatorEntry } from '../config/simulatorCatalog.js';
 
 /**
  * Correos institucionales de C-Arm Master. Se encolan en email_logs (ver mailer.js): la
@@ -231,4 +232,42 @@ export async function sendCaseAnsweredEmail({ studentId, name, email, status, re
     `Ingresa en ${loginUrl}`,
   ].join('\n');
   return queueEmail({ studentId, to: email, subject, html, text, template: 'case_answered', adminId });
+}
+
+/**
+ * Aviso de un reintento auditado (Fase 4): el admin reabrió un paso o concedió un intento
+ * adicional del examen. Incluye el motivo que registró.
+ */
+export async function sendStepReopenedEmail({ studentId, name, email, stepId, kind, reason, adminId = null }) {
+  const loginUrl = appUrl('/login');
+  const minigameTitle = kind === 'minigame' ? getSimulatorEntry(stepId)?.title : null;
+  const what = kind === 'exam'
+    ? 'un intento adicional del examen final'
+    : kind === 'minigame'
+      ? `el minijuego «${minigameTitle || stepId}» para que lo vuelvas a jugar`
+      : `el video ${stepId} para que lo vuelvas a ver`;
+  const subject = kind === 'exam'
+    ? '📝 Tienes un intento adicional del examen final'
+    : '↺ Un paso de tu curso quedó habilitado de nuevo';
+  const note = kind === 'minigame'
+    ? 'Las partidas anteriores de ese minijuego quedaron anuladas y sus Puntos de Reserva se descontaron; las nuevas suman con la misma regla.'
+    : '';
+  const html = layout({
+    title: 'Reintento autorizado - C-Arm Master',
+    badge: kind === 'exam' ? 'Intento adicional' : 'Paso reabierto',
+    bodyHtml: `
+      <p>Estimado(a) <strong>${escapeHtml(name)}</strong>,</p>
+      <p>El administrador del curso te habilitó ${escapeHtml(what)}.</p>
+      <div class="box"><strong>Motivo:</strong> ${escapeHtml(reason)}</div>
+      ${note ? `<p style="font-size: 13px;">${escapeHtml(note)}</p>` : ''}
+      <a href="${loginUrl}" class="btn">Ir a mi curso ▶</a>`,
+  });
+  const text = [
+    `Estimado(a) ${name},`,
+    `El administrador del curso te habilitó ${what}.`,
+    `Motivo: ${reason}`,
+    note,
+    `Ingresa en ${loginUrl}`,
+  ].filter(Boolean).join('\n');
+  return queueEmail({ studentId, to: email, subject, html, text, template: 'step_reopened', adminId });
 }

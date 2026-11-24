@@ -85,7 +85,7 @@ router.get('/steps/:stepId', authenticateToken, async (req, res) => {
     const stats = await get(
       `SELECT COUNT(*) AS completed_attempts, COALESCE(SUM(points_awarded), 0) AS points_earned
          FROM simulator_attempts
-        WHERE student_id = ? AND step_id = ? AND status = 'completed'`,
+        WHERE student_id = ? AND step_id = ? AND status = 'completed' AND voided_at IS NULL`,
       [studentId, stepId]
     );
     res.json({
@@ -173,6 +173,8 @@ router.post('/attempts/:attemptId/result', authenticateToken, requireOpenAccess,
         [attemptId, studentId]
       );
       if (!attempt) throw new HttpError(404, 'Intento no encontrado.');
+      // Reabierto por el admin mientras se jugaba (Fase 4): la partida anulada ya no cuenta
+      if (attempt.voided_at) throw new HttpError(409, 'Esta partida fue anulada al reabrir el minijuego. Inicia una nueva.');
 
       // Idempotente: reenviar el mismo resultado no vuelve a sumar puntos.
       if (attempt.status === 'completed') {
@@ -211,7 +213,7 @@ router.post('/attempts/:attemptId/result', authenticateToken, requireOpenAccess,
       // Tope por minijuego (siempre) y techo global de 500
       const earned = await tx.get(
         `SELECT COALESCE(SUM(points_awarded), 0) AS earned FROM simulator_attempts
-          WHERE student_id = ? AND step_id = ? AND status = 'completed'`,
+          WHERE student_id = ? AND step_id = ? AND status = 'completed' AND voided_at IS NULL`,
         [studentId, attempt.step_id]
       );
       const earnedInStep = Number(earned?.earned || 0);

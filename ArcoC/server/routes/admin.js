@@ -6,7 +6,7 @@ import { generateCertificatePDF } from '../utils/certificate.js';
 import { generateCohortActaPDF } from '../utils/cohortActa.js';
 import { sendWelcomeInductionEmail, sendProgressReminderEmail } from '../services/emailService.js';
 import { TOTAL_COURSE_STEPS, isCourseStep, countCompletedCourseSteps } from '../config/curriculum.js';
-import { EXAM_PASS_SCORE_PERCENT, EXAM_QUESTION_COUNT, MAX_EXAM_ATTEMPTS, isExamPassingScore } from '../config/examRules.js';
+import { EXAM_PASS_SCORE_PERCENT, EXAM_QUESTION_COUNT, MAX_EXAM_ATTEMPTS, isExamPassingScore, maxAttemptsFor } from '../config/examRules.js';
 import { issueToken, TOKEN_PURPOSES } from '../services/authTokens.js';
 import { logAdminAction } from '../services/adminActions.js';
 
@@ -34,7 +34,7 @@ router.get('/students', authenticateToken, checkAdmin, async (req, res) => {
 
     let query = `
       SELECT id, name, username, email, role, id_number, id_type, institution,
-             is_onboarded, exam_score, exam_attempts, reserve_points,
+             is_onboarded, exam_score, exam_attempts, exam_bonus_attempts, reserve_points,
              proctoring_incidents, focus_violations, cohort, start_date, created_at,
              is_active, deactivated_at, deactivation_reason, password_set_at, last_login_at, is_test
       FROM students
@@ -118,6 +118,8 @@ router.get('/students', authenticateToken, checkAdmin, async (req, res) => {
       reservePoints: s.reserve_points || 0,
       examScore: s.exam_score,
       examAttempts: s.exam_attempts || 0,
+      // Intentos que tiene: los del reglamento más los que concedió el admin (Fase 4)
+      examMaxAttempts: maxAttemptsFor(s.exam_bonus_attempts),
       proctoringIncidents: s.proctoring_incidents || 0,
       focusViolations: s.focus_violations || 0,
       completedModules: progressMap[s.id] || [],
@@ -151,7 +153,7 @@ router.get('/compliance/:studentId', authenticateToken, checkAdmin, async (req, 
 
     const student = await get(`
       SELECT id, name, email, role, id_number, id_type, institution, is_onboarded,
-             exam_score, exam_attempts, proctoring_incidents, focus_violations,
+             exam_score, exam_attempts, exam_bonus_attempts, proctoring_incidents, focus_violations,
              cohort, start_date, created_at, face_descriptor
       FROM students WHERE id = ?
     `, [studentId]);
@@ -209,14 +211,17 @@ router.get('/compliance/:studentId', authenticateToken, checkAdmin, async (req, 
 
     // 4. Límite Reglamentario de Intentos
     const attempts = student.exam_attempts || 0;
-    const c4_met = attempts <= MAX_EXAM_ATTEMPTS;
+    // Los intentos adicionales que concede el admin tras una revisión cuentan como autorizados
+    const bonusAttempts = Number(student.exam_bonus_attempts) || 0;
+    const allowedAttempts = maxAttemptsFor(bonusAttempts);
+    const c4_met = attempts <= allowedAttempts;
     const c4 = {
       code: 'STD_MAX_ATTEMPTS',
       title: 'Límite de Oportunidades Evaluativas',
       required: `Máximo ${MAX_EXAM_ATTEMPTS} intentos de examen permitidos según reglamento institucional IES.`,
       met: c4_met,
       status: c4_met ? 'DENTRO DEL LÍMITE' : 'EXCEDIDO',
-      details: `${attempts} de máximo ${MAX_EXAM_ATTEMPTS} intentos permitidos utilizados.`
+      details: `${attempts} de máximo ${allowedAttempts} intentos permitidos utilizados${bonusAttempts > 0 ? ` (incluye ${bonusAttempts} adicional(es) autorizado(s) por el admin)` : ''}.`
     };
 
     // 5. Integridad Académica y Tolerancia de Supervisión (Proctoring)

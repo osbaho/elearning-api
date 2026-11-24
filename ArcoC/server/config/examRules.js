@@ -10,6 +10,14 @@ export const WILDCARD_COST = 100;             // Puntos de Reserva por comodín 
 // vio: con 50 preguntas, los 3 intentos (30 preguntas) nunca repiten una.
 export const EXAM_QUESTION_BANK_TARGET = 50;
 
+/**
+ * Intentos que tiene un estudiante: los del reglamento más los adicionales que le concedió el
+ * admin tras una revisión (Fase 4, students.exam_bonus_attempts, quedan en la bitácora).
+ */
+export function maxAttemptsFor(bonusAttempts = 0) {
+  return MAX_EXAM_ATTEMPTS + Math.max(0, Number(bonusAttempts) || 0);
+}
+
 /** true si la nota (0–100) aprueba el examen. */
 export function isExamPassingScore(score) {
   return score !== null && score !== undefined && Number(score) >= EXAM_PASS_SCORE_PERCENT;

@@ -1,6 +1,6 @@
 import { all } from '../config/db.js';
 import { COURSE_STEPS, TOTAL_COURSE_STEPS, PRACTICE_STEPS } from '../config/curriculum.js';
-import { MAX_EXAM_ATTEMPTS, isExamPassingScore } from '../config/examRules.js';
+import { MAX_EXAM_ATTEMPTS, isExamPassingScore, maxAttemptsFor } from '../config/examRules.js';
 import { accessStateFor, todayIso } from './access.js';
 import { caseDto } from './supportCases.js';
 
@@ -119,7 +119,7 @@ export function computeAlerts(s, now = new Date()) {
     }
   }
 
-  if (s.examAttemptsUsed >= MAX_EXAM_ATTEMPTS) {
+  if (s.examAttemptsUsed >= (s.examMaxAttempts ?? MAX_EXAM_ATTEMPTS)) {
     alerts.push({ code: 'exam_exhausted', label: 'Agotó los intentos del examen sin aprobar' });
   }
   return alerts;
@@ -172,7 +172,7 @@ export async function loadProgressRows(filters = {}, { db = { all }, now = new D
   const { where, params } = studentFilter(filters);
   const students = await db.all(
     `SELECT s.id, s.name, s.email, s.cohort, s.start_date, s.created_at, s.is_active, s.password_set_at,
-            s.last_login_at, s.reserve_points, s.exam_score, s.exam_attempts, s.is_test, c.starts_on, c.ends_on
+            s.last_login_at, s.reserve_points, s.exam_score, s.exam_attempts, s.exam_bonus_attempts, s.is_test, c.starts_on, c.ends_on
        FROM students s
        LEFT JOIN cohorts c ON c.name = s.cohort
       WHERE ${where}
@@ -188,7 +188,7 @@ export async function loadProgressRows(filters = {}, { db = { all }, now = new D
   );
   const attempts = await db.all(
     `SELECT student_id, step_id, status, score, max_score, tier, points_awarded, completed_at
-       FROM simulator_attempts WHERE status = 'completed' AND ${ofFiltered}`,
+       FROM simulator_attempts WHERE status = 'completed' AND voided_at IS NULL AND ${ofFiltered}`,
     params
   );
   const views = await db.all(
@@ -216,6 +216,7 @@ export async function loadProgressRows(filters = {}, { db = { all }, now = new D
     const isActive = !!Number(st.is_active ?? 1);
     const activated = !!st.password_set_at;
     const examAttemptsUsed = Number(st.exam_attempts) || 0;
+    const examMaxAttempts = maxAttemptsFor(st.exam_bonus_attempts);
 
     const minigames = {};
     for (const stepId of PRACTICE_STEPS) {
@@ -254,6 +255,7 @@ export async function loadProgressRows(filters = {}, { db = { all }, now = new D
       minigames,
       completed,
       examAttemptsUsed,
+      examMaxAttempts,
     }, now);
 
     return {
@@ -274,7 +276,8 @@ export async function loadProgressRows(filters = {}, { db = { all }, now = new D
       exam: {
         score: st.exam_score === null || st.exam_score === undefined ? null : Number(st.exam_score),
         attemptsUsed: examAttemptsUsed,
-        maxAttempts: MAX_EXAM_ATTEMPTS,
+        maxAttempts: examMaxAttempts,
+        bonusAttempts: Number(st.exam_bonus_attempts) || 0,
         passed: examPassed || isExamPassingScore(st.exam_score),
       },
       lastActivityAt,
@@ -325,6 +328,10 @@ function mapAttempt(a) {
     timeSeconds: numberOrNull(a.time_seconds),
     tier: a.tier || null,
     pointsAwarded: Number(a.points_awarded) || 0,
+    // Anulada al reabrir el minijuego (Fase 4): se conserva, pero no cuenta
+    voided: Boolean(a.voided_at),
+    voidedAt: toIso(a.voided_at),
+    voidReason: a.void_reason || null,
   };
 }
 
@@ -352,7 +359,7 @@ export async function loadStudentDetail(
   );
   const attempts = await db.all(
     `SELECT id, step_id, status, started_at, completed_at, score, max_score, passed, error_count, dose_msv,
-            time_seconds, tier, points_awarded
+            time_seconds, tier, points_awarded, voided_at, void_reason
        FROM simulator_attempts WHERE student_id = ? ORDER BY started_at`,
     [studentId]
   );
@@ -435,6 +442,7 @@ export async function loadStudentDetail(
       score: numberOrNull(a.score),
       maxScore: numberOrNull(a.max_score),
       errors: numberOrNull(a.error_count),
+      voided: Boolean(a.voided_at),
     });
   }
   for (const a of examHistory) {
