@@ -77,6 +77,12 @@ async function buildStudentDto(student) {
   const completedModules = progressRecords.map(p => p.module_id);
   const attemptsUsed = Number(student.exam_attempts) || 0;
   const access = await getStudentAccess(student.id);
+  // Historial de intentos del examen (sin las preguntas): in_progress | submitted | suspended | abandoned
+  const examHistory = await all(
+    `SELECT attempt_number, status, score, question_count, started_at, finished_at
+       FROM exam_attempts WHERE student_id = ? ORDER BY attempt_number`,
+    [student.id]
+  );
 
   return {
     id: student.id,
@@ -98,6 +104,14 @@ async function buildStudentDto(student) {
       inProgress: !!Number(student.exam_in_progress),
       // 'exam' solo se registra en course_progress al aprobar
       passed: completedModules.includes('exam'),
+      history: examHistory.map((a) => ({
+        number: Number(a.attempt_number),
+        status: a.status,
+        score: a.score === null || a.score === undefined ? null : Number(a.score),
+        questionCount: Number(a.question_count),
+        startedAt: a.started_at,
+        finishedAt: a.finished_at ?? null,
+      })),
     },
     // Ventana de acceso de su promoción: 'open' | 'closed' (modo consulta) | 'not_started'
     access: access

@@ -44,8 +44,8 @@ test.describe('Security & Business Logic Hardening', () => {
   test('Course progress requires strict sequential completion', async ({ page }) => {
     await performLogin(page, 'student@test.com', 'student123', true);
 
-    // Intentar saltar directamente a m5_vr sin haber completado los pasos previos
-    const skipRes = await page.request.post('http://localhost:5000/api/progress/m5_vr');
+    // Intentar saltar directamente a m5_v3 sin haber completado los pasos previos
+    const skipRes = await page.request.post('http://localhost:5000/api/progress/m5_v3');
     expect(skipRes.status()).toBe(403);
     const skipJson = await skipRes.json();
     expect(skipJson.error).toContain('Secuencia requerida');

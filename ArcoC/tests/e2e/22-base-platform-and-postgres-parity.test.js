@@ -98,6 +98,9 @@ test.describe('Bases de la plataforma: esquema versionado, paridad PostgreSQL y 
       attemptsLeft: MAX_EXAM_ATTEMPTS - 1,
       inProgress: false,
       passed: false,
+      // El contador lo fijó test-reset: no hay intentos registrados en exam_attempts (igual que
+      // los intentos anteriores a la migración 3)
+      history: [],
     });
     expect(me).not.toHaveProperty('password');
     expect(me).not.toHaveProperty('face_descriptor');

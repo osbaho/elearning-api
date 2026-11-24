@@ -24,7 +24,9 @@ test.describe('Student Single-Sitting Complete Journey (UI/UX & Logic)', () => {
     const targetPath = path.join(SCREENSHOT_DIR, filename);
     const publicPath = path.join(PUBLIC_SCREENSHOT_DIR, filename);
     await page.screenshot({ path: targetPath, fullPage: true });
-    fs.copyFileSync(targetPath, publicPath);
+    // Las capturas publicadas solo se renuevan a pedido (UPDATE_PUBLIC_SCREENSHOTS=1): así una
+    // corrida normal no modifica archivos versionados
+    if (process.env.UPDATE_PUBLIC_SCREENSHOTS === '1') fs.copyFileSync(targetPath, publicPath);
   };
 
   test('Completes the entire student journey in a single continuous session', async ({ page, request }) => {
@@ -102,7 +104,7 @@ test.describe('Student Single-Sitting Complete Journey (UI/UX & Logic)', () => {
     // Verificar estado inicial: 0% de progreso y Examen bloqueado
     const progressFill = page.locator('.progress-bar-fill');
     await expect(progressFill).toHaveAttribute('aria-valuenow', '0');
-    await expect(page.locator('.course-progress-container')).toContainText('0 / 26 pasos');
+    await expect(page.locator('.course-progress-container')).toContainText('0 / 30 pasos');
     
     const examNavBtn = page.locator('.sidebar-nav-exam');
     await expect(examNavBtn).toBeDisabled();
@@ -143,26 +145,26 @@ test.describe('Student Single-Sitting Complete Journey (UI/UX & Logic)', () => {
     // Regresar al curso
     await page.goto('/course');
     await page.waitForSelector('.course-layout-container');
-    await expect(page.locator('.course-progress-container')).toContainText('2 / 26 pasos');
+    await expect(page.locator('.course-progress-container')).toContainText('2 / 30 pasos');
 
-    // 8. Avanzar secuencialmente el resto del curso hasta el 100% (Pasos 3 a 26)
-    //    Los minijuegos del módulo 1 exigen una partida terminada (completeStep la juega vía API)
+    // 8. Avanzar secuencialmente el resto del curso hasta el 100% (Pasos 3 a 30)
+    //    Todo minijuego exige una partida terminada (completeStep la juega vía API)
     const ALL_REMAINING_STEPS = [
       'm1_v2', 'm1_s2', 'm1_v3', 'm1_s3',
-      'm2_v1', 'm2_s1', 'm2_v2', 'm2_s2', 'm2_vr',
-      'm3_v1', 'm3_s1', 'm3_v2', 'm3_s2', 'm3_vr',
-      'm4_v1', 'm4_s1', 'm4_v2', 'm4_s2', 'm4_vr',
-      'm5_v1', 'm5_s1', 'm5_v2', 'm5_s2', 'm5_vr'
+      'm2_v1', 'm2_s1', 'm2_v2', 'm2_s2', 'm2_v3', 'm2_s3',
+      'm3_v1', 'm3_s1', 'm3_v2', 'm3_s2', 'm3_v3', 'm3_s3',
+      'm4_v1', 'm4_s1', 'm4_v2', 'm4_s2', 'm4_v3', 'm4_s3',
+      'm5_v1', 'm5_s1', 'm5_v2', 'm5_s2', 'm5_v3', 'm5_s3'
     ];
 
     for (const stepId of ALL_REMAINING_STEPS) {
       await completeStep(page.request, stepId);
 
-      // En el punto medio (Módulo 3, 50%), capturar estado visual
-      if (stepId === 'm3_s1') {
+      // En el punto medio (Módulo 3, 15 de 30 pasos), capturar estado visual
+      if (stepId === 'm3_v2') {
         await page.reload();
         await page.waitForSelector('.course-layout-container');
-        await expect(page.locator('.course-progress-container')).toContainText('13 / 26 pasos');
+        await expect(page.locator('.course-progress-container')).toContainText('15 / 30 pasos');
         await saveScreenshot(page, '07-course-midway-progress-50percent.png');
       }
     }
@@ -170,7 +172,7 @@ test.describe('Student Single-Sitting Complete Journey (UI/UX & Logic)', () => {
     // 9. Verificar estado 100% completado y desbloqueo del Examen Final
     await page.reload();
     await page.waitForSelector('.course-layout-container');
-    await expect(page.locator('.course-progress-container')).toContainText('26 / 26 pasos');
+    await expect(page.locator('.course-progress-container')).toContainText('30 / 30 pasos');
     await expect(page.locator('.course-progress-container')).toContainText('100% completado');
     await expect(examNavBtn).toBeEnabled();
     await saveScreenshot(page, '08-course-100percent-unlocked.png');
@@ -186,7 +188,7 @@ test.describe('Student Single-Sitting Complete Journey (UI/UX & Logic)', () => {
     await page.waitForSelector('.question-card', { timeout: 10000 });
     await saveScreenshot(page, '09-exam-active-questions.png');
 
-    // 11. Probar el Comodín 50/50 (consumiendo 100 de los 150 puntos)
+    // 11. Probar el Comodín 50/50 (cuesta 100 Puntos de Reserva; los minijuegos dieron más que eso)
     const firstWildcardBtn = page.locator('.btn-gold:has-text("50/50")').first();
     await expect(firstWildcardBtn).toBeVisible();
     await expect(firstWildcardBtn).toBeEnabled({ timeout: 5000 });

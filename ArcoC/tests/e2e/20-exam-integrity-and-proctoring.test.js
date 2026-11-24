@@ -129,6 +129,9 @@ test.describe('Examen final: integridad del intento, errores visibles y proctori
       // La suspensión cerró el intento en el servidor: ya no se puede enviar por la API
       const submit = await page.request.post(`${API}/submit-exam`, { data: { answers: await answerAll(questions) } });
       expect(submit.status()).toBe(409);
+      // y el historial de intentos lo registra como suspendido
+      const me = await (await page.request.get(`${API}/student/me`)).json();
+      expect(me.exam.history.map(a => a.status)).toEqual(['suspended']);
 
       // B terminó su supervisión: superado el umbral de 30 s sin latidos (+ un ciclo del monitor),
       // no debe haber suspensión

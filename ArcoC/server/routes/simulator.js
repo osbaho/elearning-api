@@ -4,7 +4,7 @@ import { get, run, withTransaction, getPgPool } from '../config/db.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { requireOpenAccess } from '../services/access.js';
 import { isPracticeStep, previousStepOf } from '../config/curriculum.js';
-import { getSimulatorEntry } from '../config/simulatorCatalog.js';
+import { getSimulatorEntry, attemptBlockReason } from '../config/simulatorCatalog.js';
 import {
   classifyPhaseResult, clampToReserveCap, clampToStepCap, POINTS_BY_TIER, MAX_POINTS_PER_PRACTICE_STEP,
 } from '../config/reservePoints.js';
@@ -79,15 +79,7 @@ router.get('/steps/:stepId', authenticateToken, async (req, res) => {
     const studentId = req.user.id;
     const entry = getSimulatorEntry(stepId);
     if (!entry) {
-      // Práctica de la malla sin contenido en el simulador todavía: es un estado válido, no un error
-      return res.json({
-        stepId,
-        available: false,
-        completedAttempts: 0,
-        pointsEarned: 0,
-        maxPoints: MAX_POINTS_PER_PRACTICE_STEP,
-        stepCompleted: await isStepCompleted(studentId, stepId),
-      });
+      return res.status(404).json({ available: false, error: 'Paso práctico sin entrada en el catálogo del simulador.' });
     }
     const stats = await get(
       `SELECT COUNT(*) AS completed_attempts, COALESCE(SUM(points_awarded), 0) AS points_earned
@@ -97,7 +89,12 @@ router.get('/steps/:stepId', authenticateToken, async (req, res) => {
     );
     res.json({
       stepId,
-      available: true,
+      // available: la escena está en el build y se juega en Unity. Un minijuego pendiente
+      // (ready: false) se muestra "en desarrollo"; fuera de producción admite partidas por API
+      // (canSimulate), para pruebas y para recorrer el curso en desarrollo.
+      available: entry.ready,
+      inDevelopment: !entry.ready,
+      canSimulate: attemptBlockReason(stepId) === null,
       scene: entry.scene,
       phase: entry.phase,
       title: entry.title,
@@ -117,8 +114,9 @@ router.post('/attempts', authenticateToken, requireOpenAccess, async (req, res) 
   try {
     const stepId = req.body?.stepId;
     const entry = getSimulatorEntry(stepId);
-    if (!entry) {
-      return res.status(404).json({ error: 'Este paso no tiene contenido de simulador.' });
+    const blockReason = attemptBlockReason(stepId);
+    if (blockReason) {
+      return res.status(entry ? 409 : 404).json({ error: blockReason });
     }
     const studentId = req.user.id;
 

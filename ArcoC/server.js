@@ -22,6 +22,7 @@ import simulatorRoutes from './server/routes/simulator.js';
 import { COURSE_STEPS } from './server/config/curriculum.js';
 import { validateSession } from './server/middleware/auth.js';
 import { startEmailWorker, stopEmailWorker, mailTransportMode } from './server/services/mailer.js';
+import { getLaunchReadiness } from './server/services/launchReadiness.js';
 
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -212,6 +213,7 @@ if (process.env.NODE_ENV !== 'production') {
       await run('DELETE FROM exam_logs WHERE student_id = ?', [student.id]);
       await run('DELETE FROM simulator_attempts WHERE student_id = ?', [student.id]);
       await run('DELETE FROM video_views WHERE student_id = ?', [student.id]);
+      await run('DELETE FROM exam_attempts WHERE student_id = ?', [student.id]);
 
       // Opcional para pruebas: marcar curso completo
       if (req.body?.complete_course) {
@@ -322,6 +324,10 @@ async function suspendExam(socketId, session, { eventType, detail, reason }) {
       'UPDATE students SET proctoring_incidents = proctoring_incidents + 1, exam_in_progress = 0 WHERE id = ?',
       [session.studentId]
     );
+    await run(
+      `UPDATE exam_attempts SET status = 'suspended', finished_at = ? WHERE student_id = ? AND status = 'in_progress'`,
+      [new Date().toISOString(), session.studentId]
+    );
     await run('INSERT INTO exam_logs (student_id, event_type, detail) VALUES (?, ?, ?)', [session.studentId, eventType, detail]);
   } catch (err) {
     console.error('Error registrando la suspensión del examen:', err);
@@ -386,6 +392,16 @@ initDb().then(() => {
   });
   // Cola de correo: envía lo pendiente y reintenta los fallos transitorios
   startEmailWorker();
+  // Producción: advierte si falta contenido o el banco oficial de preguntas
+  if (process.env.NODE_ENV === 'production') {
+    getLaunchReadiness()
+      .then(({ ready, checks }) => {
+        if (ready) return;
+        const missing = checks.filter((c) => !c.ok).map((c) => `${c.label}: ${c.detail}`);
+        console.warn(`⚠️  Preparación del lanzamiento incompleta → ${missing.join(' · ')}`);
+      })
+      .catch((err) => console.error('Error revisando la preparación del lanzamiento:', err));
+  }
 }).catch(err => {
   console.error('❌ Error initializing database:', err);
   process.exit(1);
