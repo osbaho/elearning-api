@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import * as faceapi from 'face-api.js';
+import { loadFaceApi } from '../../lib/faceApi';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 
@@ -55,6 +55,7 @@ export default function OnboardingPage() {
     if (DEV_MOCK_CAMERA || user?.isOnboarded) return;
     const loadModels = async () => {
       try {
+        const faceapi = await loadFaceApi();
         await faceapi.nets.tinyFaceDetector.loadFromUri('/models');
         await faceapi.nets.faceLandmark68Net.loadFromUri('/models');
         await faceapi.nets.faceRecognitionNet.loadFromUri('/models');
@@ -111,6 +112,7 @@ export default function OnboardingPage() {
     setIsScanning(true);
     
     try {
+      const faceapi = await loadFaceApi();
       const detection = await faceapi.detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions())
                                      .withFaceLandmarks()
                                      .withFaceDescriptor();

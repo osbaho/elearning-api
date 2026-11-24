@@ -34,7 +34,7 @@ graph TB
     subgraph CLIENT["🖥️ Frontend — Next.js 16 (App Router) :3000"]
         AUTH_CTX["AuthContext (Cookie-driven)"]
         UI_PAGES["Páginas: /login · /onboarding · /course · /course/exam · /admin"]
-        HOOK_PROCTORING["useProctoring() (face-api.js + socket.io-client)"]
+        HOOK_PROCTORING["useProctoring() (@vladmandic/face-api + socket.io-client)"]
         SIM_VIEW["SimulatorView (postMessage Bridge)"]
     end
 
@@ -138,7 +138,8 @@ ArcoC/
 │   ├── next.config.mjs            # Configuración de Next.js (caché privada del contenido del curso)
 │   ├── .env.example               # Plantilla de variables de entorno frontend
 │   ├── public/
-│   │   ├── models/                # Modelos pre-entrenados de Face-API.js
+│   │   ├── models/                # Modelos pre-entrenados de face-api (pesos originales de face-api.js)
+│   │   ├── workers/               # Worker de proctoring y copia del build de @vladmandic/face-api (sección 8)
 │   │   ├── documents/             # PDFs oficiales compilados (Lecturas 1-5 y Guía Rápida de Bolsillo)
 │   │   ├── images/                # Atlas Radiológico clínico AO Trauma (Módulos 1-5)
 │   │   ├── videos/moduloN/        # Videos web por módulo (generados, fuera de git)
@@ -471,13 +472,27 @@ sequenceDiagram
 La supervisión remota en tiempo real se orquesta entre [`useProctoring.js`](file:///c:/Oscar/ArcoC/client/src/hooks/useProctoring.js) y el monitor de latidos en [`server.js`](file:///c:/Oscar/ArcoC/server.js).
 
 ### Arquitectura de Supervisión
-1. **Onboarding:** En `/onboarding`, el alumno captura su rostro. Face-API genera un descriptor facial (Float32Array de 128 elementos) que se almacena cifrado en base de datos.
+1. **Onboarding:** En `/onboarding`, el alumno captura su rostro. face-api genera un descriptor facial (Float32Array de 128 elementos) que se almacena cifrado en base de datos.
 2. **Carga Protegida:** Al iniciar el examen, el cliente consulta `GET /api/student/descriptor` para obtener su descriptor registrado en memoria.
-3. **Bucle Local de Detección:** Cada 3 segundos, el navegador ejecuta `detectSingleFace().withFaceLandmarks().withFaceDescriptor()`.
+3. **Bucle Local de Detección:** Cada 3 segundos, el Web Worker [`public/workers/proctoringWorker.js`](client/public/workers/proctoringWorker.js) ejecuta `detectSingleFace().withFaceLandmarks().withFaceDescriptor()` sobre un fotograma de la cámara. Si el worker no está disponible, lo hace el hilo principal.
 4. **Verificación de Coincidencia:** Se calcula la distancia euclidiana entre el rostro detectado en vivo y el descriptor de referencia:
    $$\text{Distancia} < 0.6 \implies \text{Identidad Confirmada}$$
 5. **Heartbeat WebSocket:** Con el primer latido real (cámara y modelos ya listos) el cliente emite `'start_exam'`, que abre la sesión de supervisión en el servidor; después envía `'proctoring_heartbeat'` cada 3 segundos con `{ faceDetected, isMatch }`. Si no hay descriptor registrado para comparar, `isMatch` viaja como `null` (identidad no evaluable, sin penalización). Tras una reconexión del socket se reabre la sesión.
 6. **Fin de la supervisión:** al enviar el examen o salir de la página, el cliente emite `'end_exam'`; sin ello, el monitor interpretaría el fin de los latidos como pérdida de señal.
+
+### Librería de Reconocimiento Facial y Modelos
+* **Librería:** [`@vladmandic/face-api`](https://github.com/vladmandic/face-api) **1.7.15** (MIT). Es un fork de `face-api.js` y sustituyó a `face-api.js` 0.22.2, sin mantenimiento desde 2020 y basada en TensorFlow.js 1.7. Trae TensorFlow.js 4.22 empaquetado y no tiene dependencias en tiempo de ejecución. Su repositorio está **archivado desde febrero de 2025** y 1.7.15 es la versión final. No hay un fork compatible con mantenimiento activo: el sucesor del mismo autor, `@vladmandic/human`, usa otros modelos y sus descriptores no son compatibles con los ya guardados.
+* **Dónde se carga:**
+  * **Hilo principal** (enrolamiento en `/onboarding` y respaldo de `useProctoring`): [`src/lib/faceApi.js`](client/src/lib/faceApi.js) importa la librería bajo demanda y solo en el navegador. Un import estático rompe el prerender de Next, porque el TensorFlow.js empaquetado no puede evaluarse en el servidor.
+  * **Web Worker:** `proctoringWorker.js` carga con `importScripts` el archivo `public/workers/face-api.min.js`, que es una copia del build IIFE `node_modules/@vladmandic/face-api/dist/face-api.js`. Por eso la versión va fijada, sin `^`, en `client/package.json`. Si la cambias, actualiza la copia (sección 12.6).
+* **Modelos** (`public/models/`): TinyFaceDetector, FaceLandmark68Net y FaceRecognitionNet, con los pesos originales de face-api.js. Son idénticos byte a byte a los que trae el paquete en `model/`; la única diferencia es que allí cada modelo va en un solo `.bin` y aquí en shards. El cargador acepta ambos formatos.
+* **Backend de TensorFlow.js:** WebGL, el mismo que usaba la versión anterior.
+* **Compatibilidad de descriptores:** el descriptor sigue siendo un vector de 128 floats calculado con el mismo modelo, así que los descriptores ya guardados (cifrados) siguen siendo comparables con el umbral de 0,6. En la migración se comparó la versión anterior con la nueva sobre 11 imágenes, en el hilo principal y en el worker real:
+  * La distancia entre el descriptor antiguo y el nuevo de una misma imagen fue de 0,067 como máximo, y las distancias entre pares de imágenes cambiaron 0,027 como máximo.
+  * Ninguna decisión `< 0,6` cambió en los 90 pares.
+  * Con un descriptor registrado por la versión anterior, el worker devolvió los mismos `hasFace` y `match`.
+  * En la app real, el enrolamiento por la interfaz produjo un descriptor a 0,001 del que calcula la versión anterior sobre el mismo fotograma.
+  * Como referencia, variantes de una misma foto (espejo, más oscura, fotograma de webcam) llegan a 0,26 entre sí.
 
 ### Tolerancia y Estados del Monitor en Servidor (Cada 10 segundos)
 * **Advertencia Temprana (15 segundos):** Si transcurren más de 15 segundos sin recibir un latido (pero menos de 30s), el servidor emite `'proctoring_warning'`. La interfaz del estudiante despliega un banner de aviso preventivo en la barra lateral para corregir su conexión o postura.
@@ -719,7 +734,7 @@ Los videos definitivos y el build de Unity son artefactos pesados: **no se versi
 * El lint del cliente (`npm --workspace=client run lint`) no analiza el build WebGL (`client/public/webgl/**`) ni los bundles minificados de terceros (`client/public/**/*.min.js`, como `workers/face-api.min.js`): no son código del proyecto. Ver `globalIgnores` en `client/eslint.config.mjs`.
 
 ### 6. Dependencias npm y Alertas de Seguridad (Dependabot)
-Versiones clave: **Next.js 16.4.6** (con `eslint-config-next` 16.4.6) y **React 19.2.8**. En Next 16, la versión 16.4.1 corrige las alertas críticas y altas, y la 16.4.5 las moderadas. La serie 16.3 no recibió esos parches: su última versión, la 16.3.8, sigue afectada.
+Versiones clave: **Next.js 16.4.6** (con `eslint-config-next` 16.4.6), **React 19.2.8** y **@vladmandic/face-api 1.7.15**. En Next 16, la versión 16.4.1 corrige las alertas críticas y altas, y la 16.4.5 las moderadas. La serie 16.3 no recibió esos parches: su última versión, la 16.3.8, sigue afectada.
 
 GitHub (Dependabot) revisa **dos** lockfiles en `ArcoC/`, y cada uno se instala por separado:
 
@@ -729,7 +744,13 @@ GitHub (Dependabot) revisa **dos** lockfiles en `ArcoC/`, y cada uno se instala 
 | `public/documents/package-lock.json` | `convert.js` (compilación de las lecturas a PDF) | `md-to-pdf` y `puppeteer` |
 
 * **El frontend no tiene lockfile propio.** `client/` es un workspace: sus dependencias se instalan y actualizan desde `ArcoC/` (por ejemplo, `npm install <paquete> --workspace=client`), y `Dockerfile.frontend` las instala del mismo lockfile con `npm ci --workspace=client`. Dentro de `client/`, npm también trabaja sobre el workspace raíz (`npm prefix` devuelve `ArcoC/`).
-* **`node-fetch` forzado a `^2.7.0`** mediante `overrides` en el `package.json` de `ArcoC/`. npm solo aplica los `overrides` del `package.json` raíz, que cubren también al workspace `client`. `face-api.js` 0.22.2 (sin mantenimiento) depende de `@tensorflow/tfjs-core` 1.7.0, que fija `node-fetch ~2.1.2`, versión vulnerable. En el navegador tfjs no carga `node-fetch` y en Node usa el `fetch` nativo. No apliques `npm audit fix --force`, que propone bajar `face-api.js` a 0.20.0. Retira el override si se migra a un fork mantenido.
+* **Reconocimiento facial: `@vladmandic/face-api` 1.7.15, con la versión fijada.** No tiene dependencias en tiempo de ejecución, así que ya no arrastra `node-fetch` ni necesita `overrides`. Sustituyó a `face-api.js` 0.22.2, cuyo `@tensorflow/tfjs-core` 1.7.0 fijaba `node-fetch ~2.1.2`, una versión vulnerable (ver sección 8). Ten en cuenta dos cosas:
+  * `npm audit` no ve el TensorFlow.js 4.22 que va empaquetado. En la revisión periódica, consulta a mano los avisos de `@tensorflow/tfjs-core`.
+  * El worker usa una copia del build en `client/public/workers/face-api.min.js`. Si cambias la versión (`npm install @vladmandic/face-api@<versión> --save-exact --workspace=client`), actualiza también la copia (desde `ArcoC/`):
+    ```powershell
+    Copy-Item node_modules\@vladmandic\face-api\dist\face-api.js client\public\workers\face-api.min.js
+    ```
+  El repositorio del fork está archivado y 1.7.15 es su versión final. Si aparece un fork mantenido que conserve los mismos modelos y el descriptor de 128 valores, conviene migrar a él.
 * **Revisión periódica:** `npm audit` en `ArcoC/` y en `public/documents/` (`npm audit --package-lock-only`). Prefiere `npm audit fix` y versiones menores o de parche. Antes de un salto mayor, lee sus notas; para Next, la guía de `node_modules/next/dist/docs/` (ver `client/AGENTS.md`).
 
 ---
