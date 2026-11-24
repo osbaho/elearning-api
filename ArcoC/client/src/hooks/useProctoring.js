@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import * as faceapi from 'face-api.js';
 import { io } from 'socket.io-client';
+import { loadFaceApi } from '../lib/faceApi';
 
 export function useProctoring() {
   const videoRef = useRef(null);
@@ -109,6 +109,7 @@ export function useProctoring() {
   const ensureMainThreadModels = useCallback(async () => {
     if (!isModelLoadedRef.current) {
       try {
+        const faceapi = await loadFaceApi();
         await faceapi.nets.tinyFaceDetector.loadFromUri('/models');
         await faceapi.nets.faceLandmark68Net.loadFromUri('/models');
         await faceapi.nets.faceRecognitionNet.loadFromUri('/models');
@@ -240,6 +241,7 @@ export function useProctoring() {
 
           if (isModelLoadedRef.current) {
             try {
+              const faceapi = await loadFaceApi();
               const detection = await faceapi.detectSingleFace(videoEl, new faceapi.TinyFaceDetectorOptions())
                                              .withFaceLandmarks()
                                              .withFaceDescriptor();
