@@ -1,68 +1,28 @@
 import express from 'express';
-import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { run, get, all } from '../config/db.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { authenticateToken, requireAdmin } from '../middleware/auth.js';
 import { generateCertificatePDF } from '../utils/certificate.js';
 import { generateCohortActaPDF } from '../utils/cohortActa.js';
 import { sendWelcomeInductionEmail, sendProgressReminderEmail } from '../services/emailService.js';
 import { TOTAL_COURSE_STEPS, isCourseStep, countCompletedCourseSteps } from '../config/curriculum.js';
 import { EXAM_PASS_SCORE_PERCENT, EXAM_QUESTION_COUNT, MAX_EXAM_ATTEMPTS, isExamPassingScore } from '../config/examRules.js';
+import { issueToken, TOKEN_PURPOSES } from '../services/authTokens.js';
+import { logAdminAction } from '../services/adminActions.js';
 
+// Promociones (crear/editar/listar), matrícula, edición y estado de las cuentas viven en
+// adminManagement.js; aquí quedan el listado, la auditoría IES, los PDF y los correos.
 const router = express.Router();
+const checkAdmin = requireAdmin;
 
-// Middleware to check admin role
-async function checkAdmin(req, res, next) {
-  try {
-    const adminCheck = await get('SELECT role FROM students WHERE id = ?', [req.user.id]);
-    if (!adminCheck || adminCheck.role !== 'admin') {
-      return res.status(403).json({ error: 'Forbidden. Admin role required.' });
-    }
-    next();
-  } catch (err) {
-    res.status(500).json({ error: 'Error del servidor' });
-  }
-}
+// Filtro por estado de la cuenta en el listado (?status=)
+const STATUS_FILTERS = {
+  active: 'COALESCE(is_active, 1) = 1 AND password_set_at IS NOT NULL',
+  pending: 'COALESCE(is_active, 1) = 1 AND password_set_at IS NULL',
+  inactive: 'COALESCE(is_active, 1) = 0',
+};
 
-// GET /api/admin/cohorts — Agrupación, métricas y sellos criptográficos por promoción
-router.get('/cohorts', authenticateToken, checkAdmin, async (req, res) => {
-  try {
-    // CAST(... AS NUMERIC): en PostgreSQL ROUND(x, 2) solo existe para NUMERIC (AVG de REAL
-    // devuelve double precision); en SQLite el CAST no cambia el resultado.
-    // cc.* va en el GROUP BY porque PostgreSQL exige agrupar toda columna no agregada.
-    const rows = await all(`
-      SELECT
-        COALESCE(s.cohort, 'Promoción 1') as name,
-        COUNT(*) as total_students,
-        SUM(CASE WHEN s.exam_score >= ? THEN 1 ELSE 0 END) as certified_students,
-        SUM(CASE WHEN s.exam_score IS NULL OR s.exam_score < ? THEN 1 ELSE 0 END) as in_progress_students,
-        ROUND(CAST(AVG(s.exam_score) AS NUMERIC), 2) as avg_score,
-        SUM(COALESCE(s.proctoring_incidents, 0) + COALESCE(s.focus_violations, 0)) as total_incidents,
-        cc.closed_at,
-        cc.cohort_seal_hash
-      FROM students s
-      LEFT JOIN cohort_closures cc ON cc.cohort_name = COALESCE(s.cohort, 'Promoción 1')
-      WHERE s.role != 'admin'
-      GROUP BY COALESCE(s.cohort, 'Promoción 1'), cc.closed_at, cc.cohort_seal_hash
-      ORDER BY name ASC
-    `, [EXAM_PASS_SCORE_PERCENT, EXAM_PASS_SCORE_PERCENT]);
-
-    res.json({ 
-      success: true, 
-      cohorts: rows.map(r => ({
-        ...r,
-        isClosed: !!r.closed_at,
-        sealHash: r.cohort_seal_hash || null,
-        closedAt: r.closed_at || null
-      }))
-    });
-  } catch (err) {
-    console.error('Error fetching cohorts:', err);
-    res.status(500).json({ error: 'Error al consultar promociones.' });
-  }
-});
-
-// GET /api/admin/students — Listado con filtrado por promoción y búsqueda
+// GET /api/admin/students — Listado con filtrado por promoción, estado y búsqueda
 router.get('/students', authenticateToken, checkAdmin, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
@@ -70,12 +30,14 @@ router.get('/students', authenticateToken, checkAdmin, async (req, res) => {
     const offset = (page - 1) * limit;
     const cohortFilter = req.query.cohort && req.query.cohort !== 'all' ? req.query.cohort.trim() : null;
     const searchFilter = req.query.search ? `%${req.query.search.toLowerCase().trim()}%` : null;
+    const statusFilter = STATUS_FILTERS[req.query.status] || null;
 
     let query = `
-      SELECT id, name, username, email, role, id_number, id_type, institution, 
-             is_onboarded, exam_score, exam_attempts, reserve_points, 
-             proctoring_incidents, focus_violations, cohort, start_date, created_at 
-      FROM students 
+      SELECT id, name, username, email, role, id_number, id_type, institution,
+             is_onboarded, exam_score, exam_attempts, reserve_points,
+             proctoring_incidents, focus_violations, cohort, start_date, created_at,
+             is_active, deactivated_at, deactivation_reason, password_set_at, last_login_at
+      FROM students
       WHERE 1=1
     `;
     const params = [];
@@ -88,6 +50,10 @@ router.get('/students', authenticateToken, checkAdmin, async (req, res) => {
     if (searchFilter) {
       query += ` AND (LOWER(name) LIKE ? OR LOWER(email) LIKE ? OR id_number LIKE ?)`;
       params.push(searchFilter, searchFilter, searchFilter);
+    }
+
+    if (statusFilter) {
+      query += ` AND ${statusFilter}`;
     }
 
     query += ` ORDER BY id DESC LIMIT ? OFFSET ?`;
@@ -131,6 +97,9 @@ router.get('/students', authenticateToken, checkAdmin, async (req, res) => {
       countQuery += ` AND (LOWER(name) LIKE ? OR LOWER(email) LIKE ? OR id_number LIKE ?)`;
       countParams.push(searchFilter, searchFilter, searchFilter);
     }
+    if (statusFilter) {
+      countQuery += ` AND ${statusFilter}`;
+    }
     const [totalRow] = await all(countQuery, countParams);
     const total = totalRow ? parseInt(totalRow.total, 10) : 0;
 
@@ -154,106 +123,19 @@ router.get('/students', authenticateToken, checkAdmin, async (req, res) => {
       completedModules: progressMap[s.id] || [],
       certificateCode: certMap[s.id]?.certificate_code || null,
       certifiedAt: certMap[s.id]?.completed_at || null,
-      createdAt: s.created_at
+      createdAt: s.created_at,
+      // Estado de la cuenta: activa, pendiente de activación (sin contraseña) o desactivada
+      isActive: !!Number(s.is_active ?? 1),
+      activated: !!s.password_set_at,
+      deactivatedAt: s.deactivated_at || null,
+      deactivationReason: s.deactivation_reason || null,
+      lastLoginAt: s.last_login_at || null
     }));
 
     res.json({ success: true, students: mappedStudents, page, limit, total });
   } catch (err) {
     console.error('Error fetching admin students:', err);
     res.status(500).json({ error: 'Error del servidor al consultar estudiantes' });
-  }
-});
-
-// POST /api/admin/students — Registro individual de estudiante en promoción con despacho automático de correo
-router.post('/students', authenticateToken, checkAdmin, async (req, res) => {
-  try {
-    const { name, email, password, id_number, id_type, institution, cohort, start_date } = req.body;
-
-    if (!name || typeof name !== 'string' || !name.trim()) {
-      return res.status(400).json({ error: 'El nombre completo del estudiante es requerido.' });
-    }
-
-    if (!email || typeof email !== 'string' || !email.includes('@')) {
-      return res.status(400).json({ error: 'Un correo electrónico válido es requerido.' });
-    }
-
-    const normalizedEmail = email.toLowerCase().trim();
-
-    // Validar que no exista
-    const existing = await get('SELECT id FROM students WHERE LOWER(email) = ?', [normalizedEmail]);
-    if (existing) {
-      return res.status(409).json({ error: 'Ya existe un estudiante registrado con este correo electrónico.' });
-    }
-
-    const assignedCohort = (cohort && typeof cohort === 'string' && cohort.trim()) ? cohort.trim() : 'Promoción 1';
-    const effectiveStartDate = (start_date && typeof start_date === 'string' && start_date.trim()) 
-      ? start_date.trim() 
-      : new Date().toISOString().split('T')[0];
-
-    const tempPassword = (password && typeof password === 'string' && password.trim().length >= 6)
-      ? password.trim()
-      : `ArcoC${new Date().getFullYear()}!${Math.floor(1000 + Math.random() * 9000)}`;
-
-    const hashedPassword = await bcrypt.hash(tempPassword, 10);
-
-    // Generar username único
-    let baseUsername = normalizedEmail.split('@')[0].replace(/[^a-z0-9_]/g, '');
-    if (!baseUsername) baseUsername = 'student';
-    let username = baseUsername;
-    let userCheck = await get('SELECT id FROM students WHERE username = ?', [username]);
-    if (userCheck) {
-      username = `${baseUsername}_${Math.floor(100 + Math.random() * 900)}`;
-    }
-
-    await run(`
-      INSERT INTO students (
-        name, username, password, email, role, id_number, id_type, institution, cohort, start_date
-      ) VALUES (?, ?, ?, ?, 'student', ?, ?, ?, ?, ?)
-    `, [
-      name.trim(),
-      username,
-      hashedPassword,
-      normalizedEmail,
-      id_number ? id_number.trim() : null,
-      id_type ? id_type.trim() : 'CC',
-      institution ? institution.trim() : null,
-      assignedCohort,
-      effectiveStartDate
-    ]);
-
-    const createdStudent = await get('SELECT id FROM students WHERE LOWER(email) = ?', [normalizedEmail]);
-
-    // Enviar y auditar correo de inducción con guía operativa
-    let emailStatus = { success: false };
-    try {
-      emailStatus = await sendWelcomeInductionEmail({
-        studentId: createdStudent.id,
-        name: name.trim(),
-        email: normalizedEmail,
-        cohort: assignedCohort,
-        startDate: effectiveStartDate,
-        tempPassword
-      });
-    } catch (mailErr) {
-      console.error('Advertencia: No se pudo despachar el correo de inducción:', mailErr);
-    }
-
-    res.status(201).json({
-      success: true,
-      student: {
-        id: createdStudent.id,
-        name: name.trim(),
-        username,
-        email: normalizedEmail,
-        cohort: assignedCohort,
-        startDate: effectiveStartDate,
-        tempPassword
-      },
-      emailDispatched: emailStatus.success
-    });
-  } catch (err) {
-    console.error('Error creating student in admin:', err);
-    res.status(500).json({ error: 'Error del servidor al registrar estudiante.' });
   }
 });
 
@@ -396,6 +278,8 @@ router.get('/email-logs', authenticateToken, checkAdmin, async (req, res) => {
     const studentId = req.query.studentId ? parseInt(req.query.studentId, 10) : null;
     let query = `
       SELECT el.id, el.student_id, el.recipient_email, el.subject, el.sent_at, el.status,
+             el.template, el.attempts, el.last_error,
+             CASE WHEN el.payload_encrypted IS NULL THEN 0 ELSE 1 END AS retryable,
              s.name as student_name, s.cohort
       FROM email_logs el
       LEFT JOIN students s ON s.id = el.student_id
@@ -577,6 +461,10 @@ router.post('/cohorts/:cohort/close', authenticateToken, checkAdmin, async (req,
       INSERT INTO cohort_closures (cohort_name, closed_at, closed_by_admin_id, cohort_seal_hash, total_students, certified_students)
       VALUES (?, ?, ?, ?, ?, ?)
     `, [cohortName, nowIso, req.user.id, sealHash, students.length, certifiedCount]);
+    await logAdminAction({
+      adminId: req.user.id, action: 'cohort.close', targetType: 'cohort', targetId: cohortName,
+      details: { sealHash, totalStudents: students.length, certifiedStudents: certifiedCount },
+    });
 
     res.json({
       success: true,
@@ -592,22 +480,38 @@ router.post('/cohorts/:cohort/close', authenticateToken, checkAdmin, async (req,
   }
 });
 
-// POST /api/admin/resend-email/:studentId — Reenvío de credenciales y guía de inducción
+// POST /api/admin/resend-email/:studentId — Reenvío de la guía de inducción. Si la cuenta aún
+// no se activó, incluye un enlace de activación nuevo (el anterior deja de servir).
 router.post('/resend-email/:studentId', authenticateToken, checkAdmin, async (req, res) => {
   try {
     const studentId = parseInt(req.params.studentId, 10);
-    const student = await get('SELECT id, name, email, cohort, start_date FROM students WHERE id = ?', [studentId]);
-    if (!student) return res.status(404).json({ error: 'Estudiante no encontrado.' });
+    const student = await get(
+      'SELECT id, name, email, cohort, start_date, role, is_active, password_set_at FROM students WHERE id = ?',
+      [studentId]
+    );
+    if (!student || student.role !== 'student') return res.status(404).json({ error: 'Estudiante no encontrado.' });
+    if (!Number(student.is_active ?? 1)) {
+      return res.status(409).json({ error: 'La cuenta está desactivada: reactívala antes de reenviar la guía.' });
+    }
 
-    await sendWelcomeInductionEmail({
+    const activationUrl = student.password_set_at
+      ? null
+      : (await issueToken({ studentId: student.id, purpose: TOKEN_PURPOSES.ACTIVATION, adminId: req.user.id })).url;
+    const email = await sendWelcomeInductionEmail({
       studentId: student.id,
       name: student.name,
       email: student.email,
       cohort: student.cohort || 'Promoción 1',
-      startDate: student.start_date || 'Inmediato'
+      startDate: student.start_date || null,
+      activationUrl,
+      adminId: req.user.id
+    });
+    await logAdminAction({
+      adminId: req.user.id, action: 'email.resend_induction', targetType: 'student', targetId: student.id,
+      details: { withActivationLink: !!activationUrl },
     });
 
-    res.json({ success: true, message: `Correo de inducción reenviado a ${student.email}.` });
+    res.json({ success: true, emailStatus: email.status, message: `Correo de inducción reenviado a ${student.email}.` });
   } catch (err) {
     console.error('Error resending email:', err);
     res.status(500).json({ error: 'Error al reenviar correo de inducción.' });
@@ -618,23 +522,31 @@ router.post('/resend-email/:studentId', authenticateToken, checkAdmin, async (re
 router.post('/send-reminder/:studentId', authenticateToken, checkAdmin, async (req, res) => {
   try {
     const studentId = parseInt(req.params.studentId, 10);
-    const student = await get('SELECT id, name, email, cohort FROM students WHERE id = ?', [studentId]);
-    if (!student) return res.status(404).json({ error: 'Estudiante no encontrado.' });
+    const student = await get('SELECT id, name, email, cohort, role, is_active FROM students WHERE id = ?', [studentId]);
+    if (!student || student.role !== 'student') return res.status(404).json({ error: 'Estudiante no encontrado.' });
+    if (!Number(student.is_active ?? 1)) {
+      return res.status(409).json({ error: 'La cuenta está desactivada: no se envían recordatorios.' });
+    }
 
     const stepRows = await all(`
       SELECT module_id FROM course_progress WHERE student_id = ? AND status = 'completed'
     `, [studentId]);
     const completedSteps = countCompletedCourseSteps(stepRows.map(r => r.module_id));
 
-    await sendProgressReminderEmail({
+    const email = await sendProgressReminderEmail({
       studentId: student.id,
       name: student.name,
       email: student.email,
       cohort: student.cohort || 'Promoción 1',
-      completedSteps
+      completedSteps,
+      adminId: req.user.id
+    });
+    await logAdminAction({
+      adminId: req.user.id, action: 'email.reminder', targetType: 'student', targetId: student.id,
+      details: { completedSteps, totalSteps: TOTAL_COURSE_STEPS },
     });
 
-    res.json({ success: true, message: `Recordatorio académico enviado a ${student.email}.` });
+    res.json({ success: true, emailStatus: email.status, message: `Recordatorio académico enviado a ${student.email}.` });
   } catch (err) {
     console.error('Error sending reminder:', err);
     res.status(500).json({ error: 'Error al enviar recordatorio académico.' });

@@ -16,9 +16,12 @@ import { globalLimiter } from './server/middleware/rateLimiter.js';
 import authRoutes from './server/routes/auth.js';
 import examRoutes from './server/routes/exam.js';
 import adminRoutes from './server/routes/admin.js';
+import adminManagementRoutes from './server/routes/adminManagement.js';
 import progressRoutes from './server/routes/progress.js';
 import simulatorRoutes from './server/routes/simulator.js';
 import { COURSE_STEPS } from './server/config/curriculum.js';
+import { validateSession } from './server/middleware/auth.js';
+import { startEmailWorker, stopEmailWorker, mailTransportMode } from './server/services/mailer.js';
 
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -54,8 +57,15 @@ io.use((socket, next) => {
   }
   jwt.verify(token, JWT_SECRET, (err, decoded) => {
     if (err) return next(new Error('Authentication error: Invalid or expired token'));
-    socket.user = decoded;
-    next();
+    // Misma regla que la API: cuenta activa y sesión vigente (no cerrada por desactivación o
+    // cambio de contraseña)
+    validateSession(decoded)
+      .then((session) => {
+        if (session.error) return next(new Error(`Authentication error: ${session.code}`));
+        socket.user = decoded;
+        next();
+      })
+      .catch(() => next(new Error('Authentication error: session check failed')));
   });
 });
 
@@ -68,7 +78,9 @@ app.get(['/health', '/api/health'], (req, res) => {
     environment: process.env.NODE_ENV || 'development',
     database: getPgPool() ? 'postgresql' : 'sqlite',
     // Última migración aplicada: permite comprobar tras un despliegue que el esquema está al día
-    schemaVersion: getSchemaVersion()
+    schemaVersion: getSchemaVersion(),
+    // 'smtp' = los correos salen; 'log' = modo simulado (no sale ninguno)
+    mail: mailTransportMode()
   });
 });
 
@@ -101,13 +113,16 @@ app.use(
         callback(new Error(`CORS blocked for origin: ${origin}`));
       }
     },
-    methods:     ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods:     ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
   })
 );
 
-app.use(express.json({ limit: '10kb' }));
+// Cuerpos JSON de hasta 10 kB, salvo la importación masiva de estudiantes (CSV de hasta 500 filas)
+const jsonSmall = express.json({ limit: '10kb' });
+const jsonImport = express.json({ limit: '2mb' });
+app.use((req, res, next) => (req.path === '/api/admin/students/import' ? jsonImport : jsonSmall)(req, res, next));
 // Sin express.static: el backend es solo API. ArcoC/public contiene las fuentes Markdown de las
 // lecturas y herramientas de compilación, que no deben publicarse; el contenido del curso lo
 // sirve Next.js (client/public) detrás de la sesión (client/src/proxy.js).
@@ -117,6 +132,7 @@ app.use('/api', globalLimiter);
 app.use('/api', authRoutes);
 app.use('/api', examRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin', adminManagementRoutes);
 app.use('/api/progress', progressRoutes);
 app.use('/api/simulator', simulatorRoutes);
 
@@ -138,7 +154,10 @@ if (process.env.NODE_ENV !== 'production') {
         const passwordToSet = req.body?.password || 'test-admin-password';
         const salt = await bcrypt.genSalt(10);
         const hash = await bcrypt.hash(passwordToSet, salt);
-        await run('UPDATE students SET password = ? WHERE email = ?', [hash, 'admin@admin.com']);
+        await run(
+          'UPDATE students SET password = ?, is_active = 1, password_set_at = COALESCE(password_set_at, ?) WHERE email = ?',
+          [hash, new Date().toISOString(), 'admin@admin.com']
+        );
         return res.json({ success: true, email: 'admin@admin.com' });
       }
       let student = await get('SELECT id, face_descriptor, email FROM students WHERE email = ?', [email]);
@@ -170,6 +189,13 @@ if (process.env.NODE_ENV !== 'production') {
       await run(
         'UPDATE students SET exam_score = ?, exam_attempts = ?, reserve_points = ?, is_onboarded = ?, face_descriptor = ?, proctoring_incidents = 0, focus_violations = 0, exam_in_progress = 0, exam_question_ids = NULL WHERE id = ?',
         [examScore, examAttempts, reservePoints, isOnboarded, faceDesc, student.id]
+      );
+      // Cuenta activa, con contraseña y en su promoción (o la indicada), sin fecha individual:
+      // las pruebas de desactivación, activación y fechas de acceso no afectan a las siguientes
+      await run(
+        `UPDATE students SET is_active = 1, deactivated_at = NULL, deactivation_reason = NULL,
+                password_set_at = COALESCE(password_set_at, ?), cohort = ?, start_date = ? WHERE id = ?`,
+        [new Date().toISOString(), req.body?.cohort || 'Promoción 1', req.body?.start_date || null, student.id]
       );
       if (typeof req.body?.name === 'string' && req.body.name.trim()) {
         await run('UPDATE students SET name = ? WHERE id = ?', [req.body.name.trim(), student.id]);
@@ -284,6 +310,25 @@ io.on('connection', (socket) => {
   });
 });
 
+/**
+ * Suspende el examen: cierra el intento y registra la incidencia en la base, y solo después
+ * avisa al cliente. Con PostgreSQL las escrituras son asíncronas: si el aviso saliera antes, el
+ * cliente alcanzaría a enviar el examen con el intento todavía abierto.
+ */
+async function suspendExam(socketId, session, { eventType, detail, reason }) {
+  activeExams.delete(socketId); // fuera del monitor desde ya: el siguiente ciclo no la reprocesa
+  try {
+    await run(
+      'UPDATE students SET proctoring_incidents = proctoring_incidents + 1, exam_in_progress = 0 WHERE id = ?',
+      [session.studentId]
+    );
+    await run('INSERT INTO exam_logs (student_id, event_type, detail) VALUES (?, ?, ?)', [session.studentId, eventType, detail]);
+  } catch (err) {
+    console.error('Error registrando la suspensión del examen:', err);
+  }
+  io.to(socketId).emit('exam_suspended', { reason });
+}
+
 // Heartbeat & Biometric Integrity Monitor (Runs every 10 seconds)
 const proctoringMonitorInterval = setInterval(() => {
   const now = Date.now();
@@ -301,16 +346,12 @@ const proctoringMonitorInterval = setInterval(() => {
     // 1. Detección de pérdida de latidos de red (> 30 segundos sin señal)
     if (elapsed > 30000) {
       console.warn(`🚨 Proctoring fallido para estudiante ${session.studentId}. Pérdida de latido de red.`);
-      run('UPDATE students SET proctoring_incidents = proctoring_incidents + 1 WHERE id = ?', [session.studentId])
-        .catch(err => console.error(err));
-      run('INSERT INTO exam_logs (student_id, event_type, detail) VALUES (?, ?, ?)', [session.studentId, 'PROCTORING_EXPIRED', 'Pérdida de señal o desconexión por más de 30s'])
-        .catch(err => console.error(err));
       // La suspensión cierra el intento en el servidor: ya no se puede enviar por la API
-      run('UPDATE students SET exam_in_progress = 0 WHERE id = ?', [session.studentId])
-        .catch(err => console.error(err));
-
-      io.to(socketId).emit('exam_suspended', { reason: 'Pérdida prolongada de conexión con la cámara de supervisión (Heartbeat lost)' });
-      activeExams.delete(socketId);
+      suspendExam(socketId, session, {
+        eventType: 'PROCTORING_EXPIRED',
+        detail: 'Pérdida de señal o desconexión por más de 30s',
+        reason: 'Pérdida prolongada de conexión con la cámara de supervisión (Heartbeat lost)',
+      });
       continue;
     }
 
@@ -326,15 +367,7 @@ const proctoringMonitorInterval = setInterval(() => {
       // 3 ciclos de 10s = 30 segundos continuos de infracción confirmada
       if (session.violationCount >= 3) {
         console.error(`🚨 Examen suspendido definitivamente para estudiante ${session.studentId}: ${reason}`);
-        run('UPDATE students SET proctoring_incidents = proctoring_incidents + 1 WHERE id = ?', [session.studentId])
-          .catch(err => console.error(err));
-        run('INSERT INTO exam_logs (student_id, event_type, detail) VALUES (?, ?, ?)', [session.studentId, 'PROCTORING_SUSPENDED', reason])
-          .catch(err => console.error(err));
-        run('UPDATE students SET exam_in_progress = 0 WHERE id = ?', [session.studentId])
-          .catch(err => console.error(err));
-
-        io.to(socketId).emit('exam_suspended', { reason });
-        activeExams.delete(socketId);
+        suspendExam(socketId, session, { eventType: 'PROCTORING_SUSPENDED', detail: reason, reason });
       }
     } else {
       // Si el estado biométrico vuelve a ser válido, se resetea la tolerancia de gracia
@@ -351,6 +384,8 @@ initDb().then(() => {
     console.log(`\n🏥 C-Arm Master MVP → http://localhost:${PORT}`);
     console.log(`   Allowed origins: ${ALLOWED_ORIGINS.join(', ')}\n`);
   });
+  // Cola de correo: envía lo pendiente y reintenta los fallos transitorios
+  startEmailWorker();
 }).catch(err => {
   console.error('❌ Error initializing database:', err);
   process.exit(1);
@@ -360,6 +395,7 @@ initDb().then(() => {
 function gracefulShutdown(signal) {
   console.log(`\n🛑 Received ${signal}, starting graceful shutdown...`);
   if (proctoringMonitorInterval) clearInterval(proctoringMonitorInterval);
+  stopEmailWorker();
   activeExams.clear();
   if (runningServer) {
     runningServer.close(() => {

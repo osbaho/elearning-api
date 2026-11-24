@@ -14,6 +14,7 @@
  * 5000 y 3000) con DATABASE_URL apuntando a la base de prueba.
  */
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -52,10 +53,12 @@ async function startEmbeddedPostgres() {
   await ensureEmbeddedPostgres();
   const { default: EmbeddedPostgres } = await import('embedded-postgres');
   const databaseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'carm-pg-'));
+  // Base desechable: la contraseña se genera en cada ejecución (ninguna credencial fija en el repo)
+  const password = crypto.randomBytes(18).toString('base64url');
   const pg = new EmbeddedPostgres({
     databaseDir,
     user: 'postgres',
-    password: 'postgres',
+    password,
     port: PG_PORT,
     persistent: false,
     // npm 11 no ejecuta el postinstall que recrea los enlaces de las librerías (Linux/macOS)
@@ -71,7 +74,7 @@ async function startEmbeddedPostgres() {
   await pg.start();
   await pg.createDatabase(DB_NAME);
   console.log(`🐘 PostgreSQL de prueba en el puerto ${PG_PORT} (base ${DB_NAME}, datos en ${databaseDir})`);
-  return { pg, url: `postgresql://postgres:postgres@localhost:${PG_PORT}/${DB_NAME}` };
+  return { pg, url: `postgresql://postgres:${encodeURIComponent(password)}@localhost:${PG_PORT}/${DB_NAME}` };
 }
 
 async function main() {

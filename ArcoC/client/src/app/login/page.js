@@ -113,6 +113,11 @@ export default function Login() {
             </button>
           </form>
 
+          <div className="auth-help-links">
+            <Link href="/recuperar" id="link-forgot-password">¿Olvidaste tu contraseña?</Link>
+            <Link href="/recuperar">¿No activaste tu cuenta?</Link>
+          </div>
+
           <p className="text-secondary mt-16 text-center text-sm">
             Si estás interesado en acceder, contacta con nosotros.
           </p>

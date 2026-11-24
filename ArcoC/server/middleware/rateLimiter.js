@@ -29,6 +29,16 @@ export const globalLimiter = rateLimit({
   message: { error: 'Demasiadas solicitudes, por favor intenta nuevamente más tarde.' },
 });
 
+/** Activación de cuenta y recuperación de contraseña: por IP, para frenar el envío masivo de correos y la prueba de tokens. */
+export const accountRecoveryLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 20 : 1000,
+  skip: (req) => process.env.NODE_ENV !== 'production' && req.headers['x-test-secret'] === (process.env.TEST_RESET_SECRET || 'test-reset-secret-local'),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiadas solicitudes de acceso. Espera 15 minutos e inténtalo de nuevo.' },
+});
+
 export const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: process.env.NODE_ENV === 'production' ? 10 : 500,

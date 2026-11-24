@@ -159,4 +159,107 @@ export const MIGRATIONS = [
       await db.run('CREATE INDEX IF NOT EXISTS idx_simulator_attempts_student_step ON simulator_attempts(student_id, step_id)');
     },
   },
+  {
+    version: 2,
+    name: 'matricula_y_cohortes',
+    // Fase 1: promociones con fechas de acceso, estado de la cuenta, enlaces de activación y
+    // restablecimiento, bitácora del administrador y cola de correo.
+    async up(db) {
+      const { id, datetime } = db.types;
+
+      // Promociones (cohortes) como entidad. students.cohort sigue guardando el nombre, que es
+      // la clave única de la promoción (lo usan filtros, acta, CSV y sellado).
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS cohorts (
+          id ${id},
+          name TEXT UNIQUE NOT NULL,
+          starts_on TEXT,
+          ends_on TEXT,
+          description TEXT,
+          created_at ${datetime},
+          created_by_admin_id INTEGER
+        )
+      `);
+      await db.run(`UPDATE students SET cohort = 'Promoción 1' WHERE cohort IS NULL AND role != 'admin'`);
+      // Una promoción por cada nombre ya usado, sin fechas: el acceso sigue sin restricción
+      const used = await db.all(`
+        SELECT DISTINCT cohort AS name FROM students WHERE role != 'admin' AND cohort IS NOT NULL
+        UNION SELECT cohort_name AS name FROM cohort_closures
+      `);
+      const names = new Set(['Promoción 1', ...used.map((r) => r.name).filter(Boolean)]);
+      for (const name of names) {
+        await db.run('INSERT INTO cohorts (name) VALUES (?) ON CONFLICT (name) DO NOTHING', [name]);
+      }
+
+      // Estado de la cuenta
+      await db.addColumnIfMissing('students', 'is_active', 'INTEGER DEFAULT 1');
+      await db.addColumnIfMissing('students', 'deactivated_at', 'TEXT');
+      await db.addColumnIfMissing('students', 'deactivation_reason', 'TEXT');
+      // Se incrementa al desactivar o cambiar la contraseña: invalida las sesiones abiertas
+      await db.addColumnIfMissing('students', 'token_version', 'INTEGER DEFAULT 0');
+      // NULL = cuenta creada por el admin que aún no se activó con su enlace
+      await db.addColumnIfMissing('students', 'password_set_at', 'TEXT');
+      await db.addColumnIfMissing('students', 'last_login_at', 'TEXT');
+      // Las cuentas existentes ya tienen contraseña: quedan activadas
+      await db.run(`
+        UPDATE students
+           SET password_set_at = COALESCE(CAST(created_at AS TEXT), CAST(CURRENT_TIMESTAMP AS TEXT))
+         WHERE password_set_at IS NULL
+      `);
+
+      // Enlaces de un solo uso (activación y restablecimiento): solo se guarda el hash del token
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS auth_tokens (
+          id ${id},
+          student_id INTEGER NOT NULL,
+          purpose TEXT NOT NULL,
+          token_hash TEXT UNIQUE NOT NULL,
+          expires_at TEXT NOT NULL,
+          used_at TEXT,
+          created_at ${datetime},
+          created_by_admin_id INTEGER
+        )
+      `);
+      await db.run('CREATE INDEX IF NOT EXISTS idx_auth_tokens_student ON auth_tokens(student_id, purpose)');
+
+      // Bitácora de acciones del administrador: quién, cuándo, qué, sobre quién y por qué
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS admin_actions (
+          id ${id},
+          admin_id INTEGER NOT NULL,
+          action TEXT NOT NULL,
+          target_type TEXT,
+          target_id TEXT,
+          reason TEXT,
+          details TEXT,
+          created_at ${datetime}
+        )
+      `);
+      await db.run('CREATE INDEX IF NOT EXISTS idx_admin_actions_target ON admin_actions(target_type, target_id)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_admin_actions_created ON admin_actions(created_at)');
+
+      // Cola de correo: estado real del envío, reintentos y contenido cifrado hasta enviarse
+      await db.addColumnIfMissing('email_logs', 'template', 'TEXT');
+      await db.addColumnIfMissing('email_logs', 'attempts', 'INTEGER DEFAULT 0');
+      await db.addColumnIfMissing('email_logs', 'last_error', 'TEXT');
+      await db.addColumnIfMissing('email_logs', 'provider_message_id', 'TEXT');
+      await db.addColumnIfMissing('email_logs', 'next_attempt_at', 'TEXT');
+      await db.addColumnIfMissing('email_logs', 'payload_encrypted', 'TEXT');
+      await db.addColumnIfMissing('email_logs', 'created_by_admin_id', 'INTEGER');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_email_logs_status ON email_logs(status)');
+      // Hasta esta versión ningún correo salía del servidor (solo se registraba): 'sent' no era cierto
+      await db.run(`UPDATE email_logs SET status = 'simulated' WHERE status = 'sent'`);
+      // Las inducciones anteriores guardaban la contraseña temporal en texto plano: se ocultan
+      const withPasswords = await db.all(
+        'SELECT id, body_content FROM email_logs WHERE body_content LIKE ?',
+        ['%Contraseña Asignada:%']
+      );
+      for (const row of withPasswords) {
+        const redacted = row.body_content.replace(/(Contraseña Asignada:<\/strong>)[^<]*/g, '$1 ••••••••');
+        if (redacted !== row.body_content) {
+          await db.run('UPDATE email_logs SET body_content = ? WHERE id = ?', [redacted, row.id]);
+        }
+      }
+    },
+  },
 ];
