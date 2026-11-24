@@ -597,7 +597,7 @@ export default function AdminPage() {
               const passed = score >= 90;
               const docText = s.idNumber ? `${s.idType || 'CC'} ${s.idNumber}` : 'Sin datos';
               const instText = s.institution || 'Sin asignar';
-              const isCompliant = passed && modules.filter(m => m !== 'exam').length >= 25 && s.isOnboarded;
+              const isCompliant = passed && ALL_STEPS.every(k => modules.includes(k)) && s.isOnboarded;
               const lagging = isStudentLagging(s);
 
               return (

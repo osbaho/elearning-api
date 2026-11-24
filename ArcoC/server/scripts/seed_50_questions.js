@@ -1,8 +1,15 @@
-import { initDb, run } from '../config/db.js';
+import { initDb, run, closeDb, getPgPool } from '../config/db.js';
 
 async function seed() {
   await initDb();
   await run('DELETE FROM questions');
+  // El banco oficial queda siempre con ids 1–50, en cualquier motor y aunque la base ya tuviera
+  // preguntas (initDb siembra 5 al crearla): sin esto empezaría en 6 y los ids cambiarían en cada seed.
+  if (getPgPool()) {
+    await run('ALTER SEQUENCE questions_id_seq RESTART WITH 1');
+  } else {
+    await run(`DELETE FROM sqlite_sequence WHERE name = 'questions'`);
+  }
 
   
   const questions = [
@@ -485,7 +492,9 @@ async function seed() {
   console.log('✅ 50 preguntas insertadas con respuestas balanceadas (A/B/C/D), categorías y trampas anti-IA activas.');
 }
 
-seed().catch(err => {
-  console.error('Fatal error during seeding:', err);
-  process.exit(1);
-});
+seed()
+  .catch(err => {
+    console.error('Fatal error during seeding:', err);
+    process.exitCode = 1;
+  })
+  .finally(() => closeDb());

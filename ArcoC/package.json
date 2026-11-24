@@ -14,9 +14,9 @@
     "dev:client": "npm --workspace=client run dev",
     "build": "npm --workspace=client run build",
     "test": "playwright test",
+    "test:pg": "node scripts/pg-test/run-e2e.mjs",
     "seed": "node server/scripts/seed.js",
-    "seed:questions": "node server/scripts/seed_50_questions.js",
-    "clear": "node server/scripts/clear_users.js"
+    "seed:questions": "node server/scripts/seed_50_questions.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

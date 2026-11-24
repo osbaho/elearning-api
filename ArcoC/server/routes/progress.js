@@ -1,5 +1,5 @@
 import express from 'express';
-import { run, get, getPgPool } from '../config/db.js';
+import { run, get } from '../config/db.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { isCourseStep, isVideoStep, minWatchSecondsFor, previousStepOf } from '../config/curriculum.js';
 import { getSimulatorEntry } from '../config/simulatorCatalog.js';
@@ -35,10 +35,11 @@ router.post('/:moduleId/start', authenticateToken, async (req, res) => {
     const blocked = await sequenceBlockMessage(studentId, moduleId);
     if (blocked) return res.status(403).json({ error: blocked });
 
-    const insert = getPgPool()
-      ? `INSERT INTO video_views (student_id, step_id, started_at) VALUES (?, ?, ?) ON CONFLICT (student_id, step_id) DO NOTHING`
-      : `INSERT OR IGNORE INTO video_views (student_id, step_id, started_at) VALUES (?, ?, ?)`;
-    await run(insert, [studentId, moduleId, new Date().toISOString()]);
+    // ON CONFLICT … DO NOTHING: sintaxis común a PostgreSQL y SQLite (≥ 3.24)
+    await run(
+      `INSERT INTO video_views (student_id, step_id, started_at) VALUES (?, ?, ?) ON CONFLICT (student_id, step_id) DO NOTHING`,
+      [studentId, moduleId, new Date().toISOString()]
+    );
 
     const view = await get('SELECT started_at FROM video_views WHERE student_id = ? AND step_id = ?', [studentId, moduleId]);
     res.json({ stepId: moduleId, startedAt: view?.started_at, minWatchSeconds: minWatchSecondsFor(moduleId) });
@@ -54,7 +55,7 @@ router.post('/:moduleId', authenticateToken, async (req, res) => {
     const { moduleId } = req.params;
     const studentId = req.user.id;
 
-    // El módulo 'exam' NO puede marcarse manualmente; se registra exclusivamente en /api/submit-exam al aprobar con >= 90%
+    // El módulo 'exam' NO puede marcarse manualmente; se registra exclusivamente en /api/submit-exam al aprobar
     if (!isCourseStep(moduleId)) {
       return res.status(400).json({ error: 'Módulo inválido o no permitido para marcado directo.' });
     }
@@ -100,21 +101,11 @@ router.post('/:moduleId', authenticateToken, async (req, res) => {
       }
     }
 
-    const pgPool = getPgPool();
-
-    if (pgPool) {
-      await run(`
-        INSERT INTO course_progress (student_id, module_id, status)
-        VALUES (?, ?, 'completed')
-        ON CONFLICT (student_id, module_id)
-        DO NOTHING
-      `, [studentId, moduleId]);
-    } else {
-      await run(`
-        INSERT OR IGNORE INTO course_progress (student_id, module_id, status)
-        VALUES (?, ?, 'completed')
-      `, [studentId, moduleId]);
-    }
+    await run(`
+      INSERT INTO course_progress (student_id, module_id, status)
+      VALUES (?, ?, 'completed')
+      ON CONFLICT (student_id, module_id) DO NOTHING
+    `, [studentId, moduleId]);
 
     await run(
       'INSERT INTO exam_logs (student_id, event_type, detail) VALUES (?, ?, ?)',

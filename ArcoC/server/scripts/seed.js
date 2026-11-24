@@ -1,4 +1,4 @@
-import { initDb, run } from '../config/db.js';
+import { initDb, run, closeDb } from '../config/db.js';
 import bcrypt from 'bcryptjs';
 
 async function seedAdmin() {
@@ -24,7 +24,8 @@ async function seedAdmin() {
     );
     console.log(`✅ Admin created with email: ${adminEmail}`);
   } catch (error) {
-    if (error.message && error.message.includes('UNIQUE constraint')) {
+    // SQLite: "UNIQUE constraint failed"; PostgreSQL: "duplicate key value violates unique constraint"
+    if (error.message && /unique constraint/i.test(error.message)) {
       console.log('⚠️ Admin user already exists.');
     } else {
       console.error('❌ Error creating admin user:', error);
@@ -32,4 +33,9 @@ async function seedAdmin() {
   }
 }
 
-seedAdmin();
+seedAdmin()
+  .catch((err) => {
+    console.error('❌ Error en el seed del administrador:', err);
+    process.exitCode = 1;
+  })
+  .finally(() => closeDb());

@@ -2,18 +2,47 @@ import initSqlJs from 'sql.js';
 import fs from 'fs';
 import path from 'path';
 import pg from 'pg';
-import bcrypt from 'bcryptjs';
 import { fileURLToPath } from 'url';
+import { MIGRATIONS } from './migrations.js';
 
-const { Pool } = pg;
+const { Pool, types } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// Root of project is two levels up from server/config
-const DB_PATH = path.join(__dirname, '../../database.sqlite');
+// Raíz del proyecto: dos niveles arriba de server/config. SQLITE_PATH permite usar otro archivo
+// (p. ej. una base desechable para pruebas) sin tocar la de desarrollo.
+const DB_PATH = process.env.SQLITE_PATH
+  ? path.resolve(process.env.SQLITE_PATH)
+  : path.join(__dirname, '../../database.sqlite');
 const DATABASE_URL = process.env.DATABASE_URL;
+
+// ─── Paridad PostgreSQL ↔ SQLite ─────────────────────────────────────────────
+// COUNT/SUM devuelven BIGINT y AVG/ROUND NUMERIC, que node-postgres entrega como texto; SQLite
+// devuelve números. Aquí se convierten a número (los valores de la plataforma son pequeños).
+types.setTypeParser(types.builtins.INT8, (value) => parseInt(value, 10));
+types.setTypeParser(types.builtins.NUMERIC, (value) => parseFloat(value));
+// TIMESTAMP sin zona horaria: la sesión trabaja en UTC (ver initDb), así que se lee como UTC
+// y no según la zona horaria del proceso Node.
+types.setTypeParser(types.builtins.TIMESTAMP, (value) => new Date(`${value.replace(' ', 'T')}Z`));
+
+/**
+ * SSL de la conexión a PostgreSQL (DATABASE_SSL). Si DATABASE_URL trae `sslmode`, ese valor manda.
+ *   disable    sin SSL (p. ej. el Postgres de docker-compose en la red interna)
+ *   require    SSL verificando el certificado del servidor
+ *   no-verify  SSL sin verificar el certificado (valor por defecto, como en versiones anteriores)
+ */
+function pgSslOption() {
+  const mode = (process.env.DATABASE_SSL || 'no-verify').trim().toLowerCase();
+  if (['disable', 'false', 'off', '0'].includes(mode)) return false;
+  if (['require', 'verify', 'verify-full', 'true', 'on', '1'].includes(mode)) return { rejectUnauthorized: true };
+  return { rejectUnauthorized: false };
+}
+
+// Clave del candado de PostgreSQL que serializa las migraciones entre instancias que arrancan a la vez
+const MIGRATION_LOCK_KEY = 4152026;
 
 let sqliteDb;
 let pgPool;
+let schemaVersion = 0;
 
 let saveDebounceTimer = null;
 
@@ -136,12 +165,99 @@ export async function withTransaction(callback) {
   }
 }
 
+function columnTypes() {
+  return pgPool
+    ? { id: 'SERIAL PRIMARY KEY', datetime: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP' }
+    : { id: 'INTEGER PRIMARY KEY AUTOINCREMENT', datetime: 'DATETIME DEFAULT CURRENT_TIMESTAMP' };
+}
+
+async function columnExists(db, table, column) {
+  if (pgPool) {
+    const row = await db.get(
+      `SELECT 1 AS present FROM information_schema.columns
+       WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`,
+      [table, column]
+    );
+    return !!row;
+  }
+  const columns = await db.all(`PRAGMA table_info(${table})`);
+  return columns.some((c) => c.name === column);
+}
+
+/** API que recibe cada migración (ver migrations.js). */
+function migrationContext(tx) {
+  return {
+    isPg: !!pgPool,
+    types: columnTypes(),
+    run: tx.run,
+    get: tx.get,
+    all: tx.all,
+    columnExists: (table, column) => columnExists(tx, table, column),
+    async addColumnIfMissing(table, column, definition) {
+      if (!(await columnExists(tx, table, column))) {
+        await tx.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+      }
+    },
+  };
+}
+
+/** Aplica, en orden y una sola vez, las migraciones pendientes de migrations.js. */
+async function runMigrations() {
+  await run(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      applied_at ${columnTypes().datetime}
+    )
+  `);
+  const applied = new Set((await all('SELECT version FROM schema_migrations')).map((r) => Number(r.version)));
+
+  for (const migration of MIGRATIONS) {
+    if (applied.has(migration.version)) continue;
+    const appliedNow = await withTransaction(async (tx) => {
+      // Si otra instancia está migrando, se espera a que termine y se vuelve a comprobar
+      if (pgPool) await tx.run(`SELECT pg_advisory_xact_lock(${MIGRATION_LOCK_KEY})`);
+      const done = await tx.get('SELECT version FROM schema_migrations WHERE version = ?', [migration.version]);
+      if (done) return false;
+      await migration.up(migrationContext(tx));
+      await tx.run('INSERT INTO schema_migrations (version, name) VALUES (?, ?)', [migration.version, migration.name]);
+      return true;
+    });
+    if (appliedNow) console.log(`🗄️  Migración ${migration.version} aplicada: ${migration.name}`);
+  }
+
+  const row = await get('SELECT MAX(version) AS version FROM schema_migrations');
+  schemaVersion = Number(row?.version) || 0;
+}
+
+/**
+ * Retención de exam_logs (eventos del examen, comodines y proctoring: evidencia para auditorías).
+ * Por defecto se conservan siempre; con EXAM_LOG_RETENTION_DAYS > 0 se borran los más antiguos.
+ */
+async function applyExamLogRetention() {
+  const days = parseInt(process.env.EXAM_LOG_RETENTION_DAYS, 10);
+  if (!Number.isInteger(days) || days <= 0) return;
+  try {
+    if (pgPool) {
+      await run(`DELETE FROM exam_logs WHERE timestamp < NOW() - (? * INTERVAL '1 day')`, [days]);
+    } else {
+      await run(`DELETE FROM exam_logs WHERE timestamp < datetime('now', ?)`, [`-${days} days`]);
+    }
+  } catch (e) {
+    console.error('Error aplicando la retención de exam_logs', e);
+  }
+}
+
 export async function initDb() {
   if (DATABASE_URL) {
     console.log('🔗 Connecting to PostgreSQL...');
     pgPool = new Pool({
       connectionString: DATABASE_URL,
-      ssl: { rejectUnauthorized: false },
+      ssl: pgSslOption(),
+      // Fechas en UTC en todas las conexiones (CURRENT_TIMESTAMP y lectura de TIMESTAMP). Va como
+      // parámetro de arranque de la conexión: una consulta extra al conectar competiría con la
+      // primera consulta de la aplicación en el mismo cliente (pg 8 lo marca obsoleto).
+      options: '-c TimeZone=UTC',
     });
   } else {
     const SQL = await initSqlJs();
@@ -155,170 +271,18 @@ export async function initDb() {
     }
   }
 
-  const isPg = !!pgPool;
-  const idType       = isPg ? 'SERIAL PRIMARY KEY'                : 'INTEGER PRIMARY KEY AUTOINCREMENT';
-  const datetimeType = isPg ? 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP' : 'DATETIME DEFAULT CURRENT_TIMESTAMP';
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS students (
-      id ${idType},
-      name TEXT NOT NULL,
-      username TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL,
-      email TEXT UNIQUE,
-      role TEXT DEFAULT 'student',
-      reserve_points INTEGER DEFAULT 0,
-      exam_score REAL DEFAULT NULL,
-      exam_attempts INTEGER DEFAULT 0,
-      focus_violations INTEGER DEFAULT 0,
-      proctoring_incidents INTEGER DEFAULT 0,
-      created_at ${datetimeType}
-    );
-  `);
-
-  const alterTable = async (query) => {
-    try {
-      await run(query);
-    } catch (e) {
-      if (!e.message?.includes('duplicate column') && !e.message?.includes('already exists')) {
-        console.error(`Error in schema migration: ${query}`, e);
-      }
+  if (pgPool) {
+    // Los textos llevan tildes y emojis (correos): una base que no sea UTF8 rechaza esas filas
+    const encoding = await get('SHOW SERVER_ENCODING');
+    if (encoding && String(encoding.server_encoding).toUpperCase() !== 'UTF8') {
+      console.warn(`⚠️  La base de PostgreSQL usa la codificación ${encoding.server_encoding}; debe ser UTF8 (CREATE DATABASE ... ENCODING 'UTF8').`);
     }
-  };
-
-  await alterTable(`ALTER TABLE students ADD COLUMN role TEXT DEFAULT 'student'`);
-  await alterTable(`ALTER TABLE students ADD COLUMN id_number TEXT`);
-  await alterTable(`ALTER TABLE students ADD COLUMN id_type TEXT`);
-  await alterTable(`ALTER TABLE students ADD COLUMN institution TEXT`);
-  await alterTable(`ALTER TABLE students ADD COLUMN is_onboarded INTEGER DEFAULT 0`);
-  await alterTable(`ALTER TABLE students ADD COLUMN face_descriptor TEXT`);
-  await alterTable(`ALTER TABLE students ADD COLUMN cohort TEXT DEFAULT 'Promoción 1'`);
-  await alterTable(`ALTER TABLE students ADD COLUMN start_date TEXT`);
-  // Intento de examen en curso: lo abre /start-exam con su set de preguntas y lo cierra /submit-exam
-  await alterTable(`ALTER TABLE students ADD COLUMN exam_in_progress INTEGER DEFAULT 0`);
-  await alterTable(`ALTER TABLE students ADD COLUMN exam_question_ids TEXT`);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS course_progress (
-      id ${idType},
-      student_id INTEGER,
-      module_id TEXT NOT NULL,
-      status TEXT DEFAULT 'completed',
-      completed_at ${datetimeType},
-      UNIQUE(student_id, module_id)
-    );
-  `);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS questions (
-      id ${idType},
-      category TEXT DEFAULT 'general',
-      text TEXT NOT NULL,
-      poison_text TEXT,
-      option_a TEXT NOT NULL,
-      option_b TEXT NOT NULL,
-      option_c TEXT NOT NULL,
-      option_d TEXT NOT NULL,
-      correct_answer TEXT NOT NULL,
-      wildcard_eliminates TEXT DEFAULT NULL
-    );
-  `);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS exam_logs (
-      id ${idType},
-      student_id INTEGER,
-      event_type TEXT,
-      detail TEXT,
-      timestamp ${datetimeType}
-    );
-  `);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS email_logs (
-      id ${idType},
-      student_id INTEGER,
-      recipient_email TEXT NOT NULL,
-      subject TEXT NOT NULL,
-      body_content TEXT NOT NULL,
-      sent_at ${datetimeType},
-      status TEXT DEFAULT 'sent'
-    );
-  `);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS cohort_closures (
-      id ${idType},
-      cohort_name TEXT UNIQUE NOT NULL,
-      closed_at ${datetimeType},
-      closed_by_admin_id INTEGER,
-      cohort_seal_hash TEXT NOT NULL,
-      total_students INTEGER,
-      certified_students INTEGER
-    );
-  `);
-
-  // Intentos del simulador Unity WebGL: uno por partida (1 paso práctico = 1 fase).
-  // Guarda la telemetría que reporta Unity y los puntos que decidió la API.
-  await run(`
-    CREATE TABLE IF NOT EXISTS simulator_attempts (
-      id TEXT PRIMARY KEY,
-      student_id INTEGER NOT NULL,
-      step_id TEXT NOT NULL,
-      scene TEXT NOT NULL,
-      phase INTEGER NOT NULL,
-      status TEXT NOT NULL DEFAULT 'started',
-      started_at TEXT NOT NULL,
-      completed_at TEXT,
-      score INTEGER,
-      max_score INTEGER,
-      passed INTEGER,
-      error_count INTEGER,
-      dose_msv REAL,
-      time_seconds REAL,
-      tier TEXT,
-      points_awarded INTEGER
-    );
-  `);
-
-  // Primer inicio de reproducción de cada video: en producción, un video solo se registra como
-  // visto si desde aquí pasó el tiempo mínimo (curriculum.minWatchSecondsFor)
-  await run(`
-    CREATE TABLE IF NOT EXISTS video_views (
-      id ${idType},
-      student_id INTEGER NOT NULL,
-      step_id TEXT NOT NULL,
-      started_at TEXT NOT NULL,
-      UNIQUE(student_id, step_id)
-    );
-  `);
-
-  await alterTable(`ALTER TABLE course_progress ADD COLUMN certificate_code TEXT`);
-
-  // Índices para optimización de rendimiento
-  await run(`CREATE INDEX IF NOT EXISTS idx_course_progress_student ON course_progress(student_id);`);
-  await run(`CREATE INDEX IF NOT EXISTS idx_course_progress_cert ON course_progress(certificate_code);`);
-  await run(`CREATE INDEX IF NOT EXISTS idx_cohort_closures_name ON cohort_closures(cohort_name);`);
-  await run(`CREATE INDEX IF NOT EXISTS idx_exam_logs_student ON exam_logs(student_id);`);
-  await run(`CREATE INDEX IF NOT EXISTS idx_exam_logs_timestamp ON exam_logs(timestamp);`);
-  await run(`CREATE INDEX IF NOT EXISTS idx_students_email ON students(email);`);
-  await run(`CREATE INDEX IF NOT EXISTS idx_students_cohort ON students(cohort);`);
-  await run(`CREATE INDEX IF NOT EXISTS idx_email_logs_student ON email_logs(student_id);`);
-  await run(`CREATE INDEX IF NOT EXISTS idx_email_logs_email ON email_logs(recipient_email);`);
-  await run(`CREATE INDEX IF NOT EXISTS idx_simulator_attempts_student_step ON simulator_attempts(student_id, step_id);`);
-
-  // Log rotation: eliminar logs de más de 30 días para evitar crecimiento infinito
-  try {
-    if (isPg) {
-      await run(`DELETE FROM exam_logs WHERE timestamp < NOW() - INTERVAL '30 days'`);
-    } else {
-      await run(`DELETE FROM exam_logs WHERE timestamp < datetime('now', '-30 days')`);
-    }
-  } catch (e) {
-    console.error('Error cleaning old exam_logs', e);
   }
 
-  // Seed questions
+  await runMigrations();
+  await applyExamLogRetention();
+
+  // Banco inicial de preguntas (solo si la tabla está vacía)
   const qCountRes = await get('SELECT COUNT(*) as c FROM questions');
   const qCount = parseInt(qCountRes.c, 10);
   if (qCount === 0) {
@@ -396,6 +360,28 @@ export async function initDb() {
     }
     console.log(`✅ ${loadedCount} exam questions loaded.`);
   }
+}
+
+/**
+ * Cierra la base de datos: en SQLite escribe el archivo de inmediato (saveDb espera 500 ms y no
+ * llegaría a ejecutarse si el proceso termina antes) y en PostgreSQL cierra el pool, que si no
+ * mantiene vivo el proceso. Para scripts y apagado ordenado.
+ */
+export async function closeDb() {
+  if (pgPool) {
+    await pgPool.end();
+    pgPool = null;
+  }
+  if (sqliteDb) {
+    if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
+    saveDebounceTimer = null;
+    await fs.promises.writeFile(DB_PATH, Buffer.from(sqliteDb.export()));
+  }
+}
+
+/** Última migración aplicada (la expone /api/health). */
+export function getSchemaVersion() {
+  return schemaVersion;
 }
 
 export function getPgPool() {
