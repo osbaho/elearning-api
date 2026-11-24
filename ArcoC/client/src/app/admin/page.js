@@ -452,7 +452,7 @@ export default function AdminPage() {
   const selectedCohortObj = cohorts.find(c => c.name === selectedCohort);
 
   return (
-    <div className="container py-course">
+    <div className="container container-wide py-course">
       {/* Header & Title */}
       <div className="flex-between items-center mb-24 flex-wrap gap-16">
         <div>
@@ -1060,7 +1060,7 @@ export default function AdminPage() {
                         <div className="flex-between items-start gap-12">
                           <div className="flex-1">
                             <div className="flex items-center gap-8 mb-4">
-                              <span className="font-bold text-sm text-f1">
+                              <span className="font-bold text-sm text-light">
                                 {idx + 1}. {crit.title}
                               </span>
                             </div>

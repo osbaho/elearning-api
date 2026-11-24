@@ -100,7 +100,7 @@ export default function StudentDetailView({ studentId }) {
 
   if (error) {
     return (
-      <div className="container py-course">
+      <div className="container container-wide py-course">
         {backLink}
         <div className="card p-16 mt-16 text-red" id="student-detail-error">{error}</div>
       </div>
@@ -115,7 +115,7 @@ export default function StudentDetailView({ studentId }) {
     setOpenSteps((open) => (open.includes(stepId) ? open.filter((s) => s !== stepId) : [...open, stepId]));
 
   return (
-    <div className="container py-course" id="student-detail" data-student-id={student.id}>
+    <div className="container container-wide py-course" id="student-detail" data-student-id={student.id}>
       {backLink}
 
       {/* Encabezado */}
