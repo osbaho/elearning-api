@@ -5,6 +5,24 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { courseModules, ALL_STEPS } from '../../lib/courseConfig';
+import { apiRequest, formatDateTime } from '../../lib/api';
+import CohortManagerModal from './_components/CohortManagerModal';
+import StudentManageModal from './_components/StudentManageModal';
+import ImportStudentsModal from './_components/ImportStudentsModal';
+import AdminActionsModal from './_components/AdminActionsModal';
+import { EMAIL_STATUS, accountStatus } from './_components/adminLabels';
+
+const EMPTY_REG_FORM = {
+  name: '',
+  email: '',
+  id_number: '',
+  id_type: 'CC',
+  institution: '',
+  cohort: 'Promoción 1',
+  customCohort: '',
+  // Vacía = acceso según las fechas de la promoción
+  start_date: ''
+};
 
 function getModuleProgress(completedModules, moduleId) {
   const mod = courseModules.find(m => m.id === moduleId);
@@ -29,23 +47,20 @@ export default function AdminPage() {
   const [cohorts, setCohorts] = useState([]);
   const [selectedCohort, setSelectedCohort] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   // Modales
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
   const [submittingReg, setSubmittingReg] = useState(false);
-  const [regForm, setRegForm] = useState({
-    name: '',
-    email: '',
-    id_number: '',
-    id_type: 'CC',
-    institution: '',
-    cohort: 'Promoción 1',
-    customCohort: '',
-    start_date: new Date().toISOString().split('T')[0],
-    password: ''
-  });
+  const [regForm, setRegForm] = useState(EMPTY_REG_FORM);
+  // Última matrícula: muestra su enlace de activación por si el correo no llega
+  const [lastEnrollment, setLastEnrollment] = useState(null);
+  const [isCohortManagerOpen, setIsCohortManagerOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [isActionsOpen, setIsActionsOpen] = useState(false);
+  const [manageStudentId, setManageStudentId] = useState(null);
 
   // Modal de Verificación de Estándar IES
   const [complianceStudent, setComplianceStudent] = useState(null);
@@ -57,13 +72,14 @@ export default function AdminPage() {
   const [emailLogs, setEmailLogs] = useState([]);
   const [emailLogsLoading, setEmailLogsLoading] = useState(false);
 
-  const fetchCohortsAndStudents = useCallback((cohort = selectedCohort, search = searchQuery) => {
+  const fetchCohortsAndStudents = useCallback((cohort = selectedCohort, search = searchQuery, status = statusFilter) => {
     const request = async () => {
       const cohortParam = cohort !== 'all' ? `&cohort=${encodeURIComponent(cohort)}` : '';
       const searchParam = search ? `&search=${encodeURIComponent(search)}` : '';
+      const statusParam = status !== 'all' ? `&status=${encodeURIComponent(status)}` : '';
 
       return Promise.all([
-        fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/students?limit=100${cohortParam}${searchParam}`, {
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/students?limit=100${cohortParam}${searchParam}${statusParam}`, {
           credentials: 'include'
         }),
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/cohorts`, {
@@ -96,7 +112,7 @@ export default function AdminPage() {
       .finally(() => {
         setLoading(false);
       });
-  }, [selectedCohort, searchQuery]);
+  }, [selectedCohort, searchQuery, statusFilter]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -107,8 +123,27 @@ export default function AdminPage() {
     if (user.role !== 'admin') {
       return;
     }
-    fetchCohortsAndStudents(selectedCohort, searchQuery);
-  }, [user, authLoading, router, selectedCohort, searchQuery, fetchCohortsAndStudents]);
+    fetchCohortsAndStudents(selectedCohort, searchQuery, statusFilter);
+  }, [user, authLoading, router, selectedCohort, searchQuery, statusFilter, fetchCohortsAndStudents]);
+
+  const reloadPanel = () => fetchCohortsAndStudents(selectedCohort, searchQuery, statusFilter);
+
+  // Reintento de un correo fallido desde la bitácora
+  const handleRetryEmail = async (emailId) => {
+    const res = await apiRequest(`/admin/email-logs/${emailId}/retry`, { method: 'POST' });
+    if (!res.ok) return addToast(res.error, 'error');
+    addToast('Correo encolado de nuevo.', 'success');
+    openEmailLogsModal();
+  };
+
+  const copyActivationLink = async () => {
+    try {
+      await navigator.clipboard.writeText(lastEnrollment.activationUrl);
+      addToast('Enlace de activación copiado.', 'success');
+    } catch {
+      addToast('No se pudo copiar: selecciona el enlace y cópialo manualmente.', 'warning');
+    }
+  };
 
   const handleCohortChange = (cohortName) => {
     setSelectedCohort(cohortName);
@@ -342,8 +377,7 @@ export default function AdminPage() {
         id_type: regForm.id_type,
         institution: regForm.institution.trim(),
         cohort: finalCohort,
-        start_date: regForm.start_date,
-        password: regForm.password.trim() || undefined
+        start_date: regForm.start_date || null
       };
 
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/students`, {
@@ -355,20 +389,18 @@ export default function AdminPage() {
 
       const data = await res.json();
       if (res.ok) {
-        addToast(`✅ Estudiante matriculado en "${finalCohort}". Correo de inducción enviado automáticamente.`, 'success');
+        addToast(`✅ Estudiante matriculado en "${finalCohort}". Le llegará un correo para activar su cuenta.`, 'success');
         setIsRegisterModalOpen(false);
-        setRegForm({
-          name: '',
-          email: '',
-          id_number: '',
-          id_type: 'CC',
-          institution: '',
+        setLastEnrollment({
+          name: data.student.name,
+          email: data.student.email,
           cohort: finalCohort,
-          customCohort: '',
-          start_date: new Date().toISOString().split('T')[0],
-          password: ''
+          activationUrl: data.activationUrl,
+          expiresAt: data.activationExpiresAt,
+          emailTransport: data.emailTransport
         });
-        fetchCohortsAndStudents(selectedCohort, searchQuery);
+        setRegForm({ ...EMPTY_REG_FORM, cohort: finalCohort });
+        reloadPanel();
       } else {
         addToast(`Error: ${data.error || 'No se pudo matricular al estudiante.'}`, 'error');
       }
@@ -447,7 +479,28 @@ export default function AdminPage() {
           >
             📊 Exportar Auditoría (CSV)
           </button>
-          <button 
+          <button
+            className="btn btn-secondary text-sm flex items-center gap-6"
+            onClick={() => setIsActionsOpen(true)}
+            id="btn-open-admin-actions"
+          >
+            🧾 Bitácora de Acciones
+          </button>
+          <button
+            className="btn btn-secondary text-sm flex items-center gap-6"
+            onClick={() => setIsCohortManagerOpen(true)}
+            id="btn-open-cohorts"
+          >
+            🗂️ Promociones
+          </button>
+          <button
+            className="btn btn-secondary text-sm flex items-center gap-6"
+            onClick={() => setIsImportOpen(true)}
+            id="btn-open-import"
+          >
+            📥 Importar CSV
+          </button>
+          <button
             className="btn btn-primary text-sm flex items-center gap-6"
             onClick={() => setIsRegisterModalOpen(true)}
             id="btn-register-student-modal"
@@ -456,6 +509,29 @@ export default function AdminPage() {
           </button>
         </div>
       </div>
+
+      {/* Última matrícula: enlace de activación por si el correo no llega */}
+      {lastEnrollment && (
+        <div className="card p-16 mb-24 enrollment-banner" id="enrollment-banner">
+          <div className="flex-between items-start gap-12 flex-wrap">
+            <div className="text-sm">
+              ✅ <strong>{lastEnrollment.name}</strong> ({lastEnrollment.email}) quedó matriculado(a) en «{lastEnrollment.cohort}».
+              <div className="text-xs text-secondary mt-4">
+                {lastEnrollment.emailTransport === 'smtp'
+                  ? 'Se le envió el correo de bienvenida con su enlace de activación.'
+                  : 'Correo en modo simulado (sin SMTP configurado): comparte el enlace manualmente.'}
+                {' '}El enlace es personal, de un solo uso y vence {formatDateTime(lastEnrollment.expiresAt)}.
+              </div>
+            </div>
+            <button className="btn btn-secondary text-xs px-8 py-4" onClick={() => setLastEnrollment(null)}>✕</button>
+          </div>
+          <div className="flex gap-6 mt-8">
+            <input id="enrollment-activation-url" className="input text-xs flex-1" readOnly value={lastEnrollment.activationUrl}
+              onFocus={(e) => e.target.select()} />
+            <button id="btn-copy-activation" className="btn btn-secondary text-xs px-8" onClick={copyActivationLink}>Copiar enlace</button>
+          </div>
+        </div>
+      )}
 
       {/* Cohort Tabs / Filter Selector */}
       <div className="card p-16 mb-24">
@@ -523,6 +599,18 @@ export default function AdminPage() {
             onChange={handleSearchChange}
             id="input-admin-search"
           />
+          <select
+            className="input text-sm"
+            value={statusFilter}
+            onChange={(e) => { setStatusFilter(e.target.value); setLoading(true); }}
+            id="select-status-filter"
+            aria-label="Filtrar por estado de la cuenta"
+          >
+            <option value="all">Todas las cuentas</option>
+            <option value="active">Activas</option>
+            <option value="pending">Pendientes de activación</option>
+            <option value="inactive">Desactivadas</option>
+          </select>
           {searchQuery && (
             <button 
               className="btn btn-secondary text-xs px-12"
@@ -599,12 +687,16 @@ export default function AdminPage() {
               const instText = s.institution || 'Sin asignar';
               const isCompliant = passed && ALL_STEPS.every(k => modules.includes(k)) && s.isOnboarded;
               const lagging = isStudentLagging(s);
+              const account = accountStatus(s);
 
               return (
-                <tr key={s.id} data-student-id={s.id} data-student-email={s.email} data-cohort={s.cohort || 'Promoción 1'}>
+                <tr key={s.id} data-student-id={s.id} data-student-email={s.email} data-cohort={s.cohort || 'Promoción 1'} data-account-status={account.key}>
                   <td>
                     <div className="font-bold">{s.name}</div>
                     <div className="text-xs text-muted">{s.email}</div>
+                    {account.key !== 'active' && (
+                      <span className={`${account.className} mt-4 d-inline-block`}>{account.label}</span>
+                    )}
                   </td>
                   <td>
                     <span className="badge-admin py-2 px-8 text-xs">{s.cohort || 'Promoción 1'}</span>
@@ -655,6 +747,14 @@ export default function AdminPage() {
                   </td>
                   <td className="text-center">
                     <div className="flex gap-6 justify-center items-center flex-wrap">
+                      <button
+                        id={`btn-manage-${s.id}`}
+                        className="btn btn-secondary text-xs px-8 py-4"
+                        onClick={() => setManageStudentId(s.id)}
+                        title="Editar datos, cambiar de promoción, enlace de acceso, desactivar e historial"
+                      >
+                        ⚙️ Gestionar
+                      </button>
                       <button
                         id={`btn-eval-standard-${s.id}`}
                         className="btn btn-secondary text-xs px-8 py-4"
@@ -722,7 +822,7 @@ export default function AdminPage() {
             <form onSubmit={handleSubmitRegister}>
               <div className="modal-body">
                 <div className="p-12 mb-16 rounded bg-card border text-xs text-secondary leading-relaxed">
-                  ℹ️ <strong>Despacho Institucional Automatizado:</strong> Al registrar al estudiante, el sistema enviará inmediatamente un correo electrónico oficial de bienvenida con sus credenciales, la fecha de acceso habilitada y la <strong>guía de 5 pasos</strong> para iniciar el curso y cumplir el estándar institucional.
+                  ℹ️ <strong>Activación por enlace:</strong> el estudiante recibe un correo de bienvenida con un enlace personal (de un solo uso, válido 7 días) para crear su contraseña, junto con la guía para iniciar el curso. Nunca se envían contraseñas por correo.
                 </div>
 
                 <div className="grid-cols-2 gap-12 mb-12">
@@ -761,22 +861,25 @@ export default function AdminPage() {
                       onChange={(e) => setRegForm({ ...regForm, cohort: e.target.value })}
                       id="reg-select-cohort"
                     >
-                      <option value="Promoción 1">Promoción 1</option>
-                      <option value="Promoción 2">Promoción 2</option>
-                      <option value="Promoción 3">Promoción 3</option>
+                      {cohorts.filter(c => !c.isClosed).map(c => (
+                        <option key={c.id ?? c.name} value={c.name}>{c.name}</option>
+                      ))}
+                      {!cohorts.some(c => c.name === 'Promoción 1') && <option value="Promoción 1">Promoción 1</option>}
                       <option value="OTRA">+ Crear Nueva Promoción...</option>
                     </select>
                   </div>
                   <div>
-                    <label className="text-xs text-secondary font-bold block mb-4">Fecha Habilitada de Acceso *</label>
+                    <label className="text-xs text-secondary font-bold block mb-4" htmlFor="reg-input-start-date">
+                      Acceso individual desde (opcional)
+                    </label>
                     <input
                       type="date"
                       className="input text-sm w-full"
-                      required
                       value={regForm.start_date}
                       onChange={(e) => setRegForm({ ...regForm, start_date: e.target.value })}
                       id="reg-input-start-date"
                     />
+                    <div className="text-xs text-muted mt-4">Vacía: según las fechas de la promoción.</div>
                   </div>
                 </div>
 
@@ -831,19 +934,6 @@ export default function AdminPage() {
                   </div>
                 </div>
 
-                <div className="mb-8">
-                  <label className="text-xs text-secondary font-bold block mb-4">
-                    Contraseña Inicial (Opcional - si se deja en blanco se autogenera)
-                  </label>
-                  <input
-                    type="password"
-                    className="input text-sm w-full"
-                    placeholder="Mínimo 6 caracteres"
-                    value={regForm.password}
-                    onChange={(e) => setRegForm({ ...regForm, password: e.target.value })}
-                    id="reg-input-password"
-                  />
-                </div>
               </div>
 
               <div className="modal-footer">
@@ -1007,26 +1097,36 @@ export default function AdminPage() {
                       <th scope="col">Destinatario</th>
                       <th scope="col">Estudiante / Promoción</th>
                       <th scope="col">Asunto Institucional</th>
-                      <th scope="col">Fecha / Hora de Envío</th>
+                      <th scope="col">Fecha / Hora</th>
                       <th scope="col">Estado</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {emailLogs.map(log => (
-                      <tr key={log.id}>
-                        <td className="font-mono">{log.id}</td>
-                        <td className="font-mono text-cyan">{log.recipient_email}</td>
-                        <td>
-                          <div>{log.student_name || 'Estudiante'}</div>
-                          <span className="badge-admin text-xs">{log.cohort || 'Promoción 1'}</span>
-                        </td>
-                        <td>{log.subject}</td>
-                        <td className="font-mono text-muted">{new Date(log.sent_at).toLocaleString()}</td>
-                        <td>
-                          <span className="compliance-badge-pass text-xs">✓ {log.status}</span>
-                        </td>
-                      </tr>
-                    ))}
+                    {emailLogs.map(log => {
+                      const status = EMAIL_STATUS[log.status] || { label: log.status, className: 'email-status' };
+                      return (
+                        <tr key={log.id} data-email-status={log.status}>
+                          <td className="font-mono">{log.id}</td>
+                          <td className="font-mono text-cyan">{log.recipient_email}</td>
+                          <td>
+                            <div>{log.student_name || 'Estudiante'}</div>
+                            <span className="badge-admin text-xs">{log.cohort || 'Promoción 1'}</span>
+                          </td>
+                          <td>{log.subject}</td>
+                          <td className="font-mono text-muted">{formatDateTime(log.sent_at)}</td>
+                          <td>
+                            <span className={status.className}>{status.label}</span>
+                            {log.attempts > 1 && <div className="text-muted">{log.attempts} intentos</div>}
+                            {log.last_error && <div className="text-red" title={log.last_error}>{log.last_error.slice(0, 80)}</div>}
+                            {log.status === 'failed' && !!log.retryable && (
+                              <button className="btn btn-secondary text-xs px-8 py-4 mt-4" onClick={() => handleRetryEmail(log.id)}>
+                                Reintentar
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               ) : (
@@ -1044,6 +1144,38 @@ export default function AdminPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {isCohortManagerOpen && (
+        <CohortManagerModal
+          cohorts={cohorts}
+          onClose={() => setIsCohortManagerOpen(false)}
+          onChanged={reloadPanel}
+          addToast={addToast}
+        />
+      )}
+
+      {isImportOpen && (
+        <ImportStudentsModal
+          cohorts={cohorts}
+          defaultCohort={selectedCohort !== 'all' ? selectedCohort : 'Promoción 1'}
+          onClose={() => setIsImportOpen(false)}
+          onImported={reloadPanel}
+          addToast={addToast}
+        />
+      )}
+
+      {isActionsOpen && <AdminActionsModal onClose={() => setIsActionsOpen(false)} />}
+
+      {manageStudentId && (
+        <StudentManageModal
+          key={manageStudentId}
+          studentId={manageStudentId}
+          cohorts={cohorts}
+          onClose={() => setManageStudentId(null)}
+          onChanged={reloadPanel}
+          addToast={addToast}
+        />
       )}
     </div>
   );

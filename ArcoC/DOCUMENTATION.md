@@ -103,23 +103,30 @@ ArcoC/
 │   │   ├── migrations.js          # Migraciones versionadas del esquema (tabla schema_migrations)
 │   │   ├── curriculum.js          # Malla de 26 pasos: fuente única de verdad del servidor
 │   │   ├── examRules.js           # Reglas del examen: preguntas por intento, nota mínima, intentos, comodín
+│   │   ├── appUrls.js             # URL pública del frontend para los enlaces de correos (APP_PUBLIC_URL)
 │   │   ├── simulatorCatalog.js    # Paso práctico → escena y fase del simulador Unity
 │   │   └── reservePoints.js       # Regla 10/5/0 por fase y techo de 500 Puntos de Reserva
 │   ├── middleware/
-│   │   ├── auth.js                # Validación de JWT (cookies y headers) y rol admin
+│   │   ├── auth.js                # Sesión: JWT + cuenta activa + versión de sesión; requireAdmin
 │   │   └── rateLimiter.js         # Rate limiting global y login limiter
 │   ├── routes/
-│   │   ├── auth.js                # Rutas de login, logout, me, descriptor, onboarding
+│   │   ├── auth.js                # Login, logout, me, onboarding; activación y recuperación de contraseña
 │   │   ├── exam.js                # Preguntas, inicio, comodines, calificación, verificación
 │   │   ├── progress.js            # Marcado de pasos con validación secuencial
 │   │   ├── simulator.js           # Partidas del simulador Unity y resultados por fase
-│   │   └── admin.js               # Dashboard de auditoría IES y descarga de constancias
+│   │   ├── admin.js               # Listado, auditoría IES, CSV, PDF, sellado, reenvío y recordatorios
+│   │   └── adminManagement.js     # Promociones, matrícula (individual y CSV), edición, estado de cuentas, bitácora
 │   ├── utils/
 │   │   ├── certificate.js         # Generación de PDF (PDFKit) y validación pública
 │   │   ├── cohortActa.js          # Acta colectiva y libro de calificaciones por promoción (PDF)
-│   │   └── crypto.js              # Cifrado autenticado AES-256-GCM para biometría
+│   │   ├── crypto.js              # Cifrado autenticado AES-256-GCM (biometría y cola de correo)
+│   │   └── csv.js                 # Lectura del CSV de importación de estudiantes y plantilla
 │   ├── services/
-│   │   └── emailService.js        # Correos de inducción y recordatorio (registrados en email_logs)
+│   │   ├── emailService.js        # Plantillas: bienvenida con activación, restablecimiento, recordatorio
+│   │   ├── mailer.js              # Cola de correo (email_logs), SMTP o modo simulado, reintentos
+│   │   ├── authTokens.js          # Enlaces de un solo uso (activación y restablecimiento), solo su hash
+│   │   ├── adminActions.js        # Bitácora de acciones del administrador (admin_actions)
+│   │   └── access.js              # Ventana de acceso según las fechas de la promoción
 │   └── scripts/
 │       ├── seed.js                # Inicialización de cuenta de Administrador
 │       ├── seed_50_questions.js   # Banco oficial de 50 preguntas médicas (actualizado a 2026/ACHS)
@@ -142,16 +149,22 @@ ArcoC/
 │       ├── app/
 │       │   ├── page.js            # Landing page institucional
 │       │   ├── login/page.js      # Inicio de sesión con autenticación HttpOnly
+│       │   ├── activar/           # Crear la contraseña con el enlace de bienvenida (/activar?token=)
+│       │   ├── recuperar/         # «¿Olvidaste tu contraseña?»
+│       │   ├── restablecer/       # Nueva contraseña con el enlace de recuperación (/restablecer?token=)
 │       │   ├── onboarding/page.js # Registro biométrico y formulario Habeas Data
 │       │   ├── course/page.js     # Dashboard central del curso, selector de módulos y guía rápida
 │       │   ├── course/practice/   # Rutas dinámicas para minijuegos interactivos
 │       │   ├── course/exam/page.js# Interfaz del examen y panel de proctoring
-│       │   └── admin/page.js      # Panel de auditoría para directores IES
+│       │   ├── admin/page.js      # Panel de auditoría para directores IES
+│       │   └── admin/_components/ # Promociones, gestión del estudiante, importación CSV y bitácora
 │       ├── components/
 │       │   ├── ModuleCard.js      # Tarjeta de módulo con estado visual
 │       │   ├── VideoPlayer.js     # Reproductor con control de adelanto (scrubbing)
 │       │   ├── SimulatorView.js   # Página de práctica: partidas, iframe del simulador Unity y Atlas Radiológico
-│       │   └── ProtectedRoute.js  # Guardián de rutas por autenticación y rol
+│       │   ├── ProtectedRoute.js  # Guardián de rutas por autenticación y rol
+│       │   ├── PublicShell.js     # Marco de las páginas públicas de acceso
+│       │   └── SetPasswordForm.js # Formulario de contraseña con enlace de un solo uso
 │       ├── context/
 │       │   ├── AuthContext.js     # Estado reactivo global de usuario
 │       │   └── ToastContext.js    # Notificaciones accesibles (ARIA live)
@@ -159,13 +172,14 @@ ArcoC/
 │       │   └── useProctoring.js   # Hook para cámara, face-api y WebSockets
 │       └── lib/
 │           ├── courseConfig.js    # Configuración de los 26 pasos del curso (títulos, videos, íconos)
-│           └── faceApi.js         # Carga diferida de @vladmandic/face-api (solo en el navegador)
+│           └── api.js             # Llamadas al API con sesión, descargas y formato de fechas
 │
 └── tests/
     ├── helpers/
     │   ├── loginHelper.js         # Utilidad de login y reset para tests
-    │   └── simulatorHelper.js     # Partidas del simulador y avance de pasos vía API
-    └── e2e/                       # 22 suites Playwright (ver sección 13)
+    │   ├── simulatorHelper.js     # Partidas del simulador y avance de pasos vía API
+    │   └── adminHelper.js         # Sesión de admin en contexto propio, promociones y matrículas vía API
+    └── e2e/                       # 25 suites Playwright (ver sección 13)
 ```
 
 En la raíz del monorepo, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) corre el lint del cliente y la suite E2E sobre SQLite y PostgreSQL (ver sección 13).
@@ -257,14 +271,33 @@ Primer inicio de reproducción de cada video por estudiante (`POST /api/progress
 #### 7. `schema_migrations`
 Migraciones aplicadas (ver *Migraciones versionadas*): `version` (PK), `name`, `applied_at`.
 
+#### 8. `cohorts` (migración 2)
+Promociones: `id`, `name` (UNIQUE; es lo que guarda `students.cohort`), `starts_on` y `ends_on` (AAAA-MM-DD, opcionales), `description`, `created_at`, `created_by_admin_id`. La migración creó una por cada nombre ya usado, sin fechas (el acceso siguió sin restricción).
+
+#### 9. `auth_tokens` (migración 2)
+Enlaces de un solo uso: `student_id`, `purpose` (`activation` | `password_reset`), `token_hash` (SHA-256 del token, UNIQUE; el token en claro nunca se guarda), `expires_at`, `used_at` (también marca los enlaces reemplazados por uno nuevo), `created_by_admin_id`.
+
+#### 10. `admin_actions` (migración 2)
+Bitácora del administrador: `admin_id`, `action`, `target_type` (`student` | `cohort` | `email`), `target_id`, `reason`, `details` (JSON con el antes y el después), `created_at`. Ver sección 10.4.
+
+#### Columnas agregadas por la migración 2
+* `students`: `is_active` (1 por defecto), `deactivated_at`, `deactivation_reason`, `token_version` (invalida sesiones), `password_set_at` (vacío = pendiente de activación; las cuentas existentes quedaron activadas), `last_login_at`.
+* `email_logs`: `template`, `attempts`, `last_error`, `provider_message_id`, `next_attempt_at`, `payload_encrypted` (contenido cifrado hasta enviarse), `created_by_admin_id`. Estados: `queued`, `sent`, `simulated`, `failed` (sección 10.5).
+
 ---
 
 ## 4. Flujos de Autenticación y Sesión
 
-* **Tokens JWT:** Firmados con clave de 32+ caracteres (`JWT_SECRET`) y vigencia de 12 horas.
+* **Tokens JWT:** Firmados con clave de 32+ caracteres (`JWT_SECRET`) y vigencia de 12 horas. Llevan `tv`, la versión de sesión de la cuenta.
+* **Sesión validada en cada petición ([`server/middleware/auth.js`](server/middleware/auth.js)):** además de la firma, `authenticateToken` comprueba en la base que la cuenta exista, esté activa (`is_active`) y que `tv` coincida con `students.token_version`. Desactivar la cuenta o cambiar la contraseña incrementa esa versión y **cierra todas las sesiones abiertas** (también el socket de proctoring). El rol se lee de la base, no del token.
 * **Entrega de Cookies Seguras:** La cookie de autenticación (`token`) se emite con directivas `HttpOnly; SameSite=lax; Path=/`. En entornos de producción activa `Secure=true`.
+* **Activación de cuenta (nunca se envían contraseñas):** el admin matricula y la cuenta queda *pendiente de activación* (`password_set_at` vacío, con el hash de un secreto aleatorio que nadie conoce). El estudiante recibe un enlace `/activar?token=…` (un solo uso, válido 7 días), crea su contraseña (`POST /api/auth/activate`) y entra directamente; si su promoción aún no empieza, la cuenta queda activada sin abrir sesión. En la base solo se guarda el hash SHA-256 del token (tabla `auth_tokens`).
+* **Recuperar la contraseña:** `/recuperar` → `POST /api/auth/forgot-password` responde siempre lo mismo, exista o no el correo. A una cuenta sin activar le llega un enlace de activación nuevo; a una activada, uno de restablecimiento `/restablecer?token=…` (un solo uso, válido 1 hora) que termina en `POST /api/auth/reset-password` y cierra las demás sesiones. `GET /api/auth/token-info` valida el enlace antes de pedir la contraseña (muestra el nombre sin títulos y el correo enmascarado). Emitir un enlace invalida los anteriores del mismo tipo.
+* **Política de contraseñas:** entre 8 y 128 caracteres, con letras y números (la aplican el servidor y el formulario).
+* **Mensajes de inicio de sesión:** con credenciales incorrectas o una cuenta sin activar, el mismo mensaje genérico (`INVALID_CREDENTIALS`, con la pista de activar o recuperar la cuenta), para no revelar qué correos están inscritos. Con la contraseña correcta se explica el motivo del rechazo: cuenta desactivada (`ACCOUNT_DISABLED`) o promoción que aún no empieza (`ACCESS_NOT_STARTED`, con la fecha). Cada ingreso actualiza `last_login_at`.
+* **Límites de frecuencia:** `/api/login`, 10 intentos fallidos por IP cada 15 min en producción; activación y recuperación, 20 solicitudes por IP cada 15 min.
 * **Timing-Attack Resilience:** En caso de que un correo electrónico no exista en la base de datos, el backend ejecuta un hash simulado mediante `bcrypt.compare` contra una cadena predeterminada, neutralizando la enumeración de usuarios por discrepancias en tiempos de respuesta.
-* **Socket Authentication:** El handshake de WebSockets extrae e inspecciona automáticamente la cookie HTTP mediante el parser tolerante a versiones de Node.js, impidiendo la apertura de canales de proctoring a clientes sin token válido.
+* **Socket Authentication:** El handshake de WebSockets extrae la cookie HTTP y aplica la misma validación de sesión que la API (cuenta activa y versión de sesión vigente), impidiendo la apertura de canales de proctoring a clientes sin sesión válida.
 
 ---
 
@@ -463,7 +496,7 @@ La supervisión remota en tiempo real se orquesta entre [`useProctoring.js`](fil
 
 ### Tolerancia y Estados del Monitor en Servidor (Cada 10 segundos)
 * **Advertencia Temprana (15 segundos):** Si transcurren más de 15 segundos sin recibir un latido (pero menos de 30s), el servidor emite `'proctoring_warning'`. La interfaz del estudiante despliega un banner de aviso preventivo en la barra lateral para corregir su conexión o postura.
-* **Pérdida Crítica de Señal (30 segundos):** Si la desconexión supera los 30 segundos, se suspende el examen de forma permanente emitiendo `'exam_suspended'`, incrementando `proctoring_incidents`, registrando el evento `PROCTORING_EXPIRED` y **cerrando el intento en el servidor** (ya no se puede enviar por la API).
+* **Pérdida Crítica de Señal (30 segundos):** Si la desconexión supera los 30 segundos, se suspende el examen de forma permanente emitiendo `'exam_suspended'`, incrementando `proctoring_incidents`, registrando el evento `PROCTORING_EXPIRED` y **cerrando el intento en el servidor** (ya no se puede enviar por la API). El intento se cierra y la incidencia se registra en la base **antes** de avisar al cliente: con PostgreSQL, que escribe de forma asíncrona, el aviso salía primero y el cliente alcanzaba a enviar el examen con el intento abierto.
 * **Infracción de Identidad o Ausencia Facial:** Si se detecta ausencia de rostro o discrepancia biométrica, se incrementa un contador de violación (`violationCount`). Se requiere confirmar la infracción durante **3 ciclos continuos (30 segundos)** para suspender el examen definitivamente, previniendo falsos positivos por parpadeos o movimientos rápidos.
 * **Detección de Cámaras Virtuales:** El hook inspecciona la etiqueta del dispositivo (`videoTrack.label`). Nombres asociados a OBS, Snap Camera, vCam o software emulador son bloqueados inmediatamente antes de permitir el inicio de la evaluación.
 
@@ -501,10 +534,11 @@ El panel administrativo ([`client/src/app/admin/page.js`](file:///c:/Oscar/ArcoC
 
 ```mermaid
 graph TD
-    ADMIN["👤 Administrador / Auditor IES"] -->|POST /api/admin/students| REGISTER["Matriculación por Promoción<br/>(Cohortes 1, 2, 3...)"]
-    REGISTER -->|Automático| EMAIL_SVC["Servicio de Mensajería Institucional<br/>(emailService.js)"]
-    EMAIL_SVC -->|Despacho| EMAIL_STUDENT["📧 Correo al Estudiante<br/>• Credenciales y fecha habilitada<br/>• Guía de 5 pasos para el estándar"]
-    EMAIL_SVC -->|Trazabilidad Forense| EMAIL_LOGS["🗄️ Tabla email_logs<br/>Registro inmutable para requerimientos legales"]
+    ADMIN["👤 Administrador / Auditor IES"] -->|POST /api/admin/students<br/>o importación CSV| REGISTER["Matriculación por Promoción<br/>(cuenta pendiente de activación)"]
+    REGISTER -->|Enlace de un solo uso| EMAIL_SVC["Cola de correo<br/>(mailer.js + emailService.js)"]
+    EMAIL_SVC -->|SMTP| EMAIL_STUDENT["📧 Correo al Estudiante<br/>• Enlace para crear su contraseña<br/>• Fecha de acceso y guía del curso"]
+    EMAIL_SVC -->|Estado real y reintentos| EMAIL_LOGS["🗄️ Tabla email_logs<br/>queued · sent · simulated · failed"]
+    ADMIN -->|Toda modificación| ACTIONS["🧾 Tabla admin_actions<br/>quién, qué, sobre quién, cuándo y por qué"]
 
     ADMIN -->|Filtro Reactivo| COHORTS_VIEW["Segmentación de Promociones<br/>(Pestañas + KPIs específicos)"]
     ADMIN -->|GET /api/admin/compliance/:id| AUDIT_MODAL["🔍 Modal de Estándar Institucional IES<br/>Evaluación de 6 Criterios Obligatorios"]
@@ -515,33 +549,51 @@ graph TD
     ADMIN -->|GET /api/admin/export-audit| CSV_EXPORT["📊 Exportación CSV Oficial<br/>UTF-8 BOM para Excel · 16 columnas reglamentarias"]
 ```
 
-### 10.1 Gestión y Segmentación por Promociones (Cohortes)
-* **Separación por Cohortes:** Los estudiantes son organizados en cohortes académicas (ej. *"Promoción 1"*, *"Promoción 2"*, etc.), permitiendo a la institución comparar grupos de residentes, médicos de planta y tecnólogos.
-* **Métricas y KPIs Dinámicos:** Cada cohorte recalcula en tiempo real el total de matriculados, estudiantes con Aval IES Aprobado ($\ge 90\%$), alumnos en instrucción activa, promedio global de calificación e incidentes de integridad registrados.
-* **Filtrado Reactivo y Búsqueda:** La interfaz permite alternar instantáneamente entre promociones o buscar en tiempo real por nombre, correo electrónico o documento de identidad.
+### 10.1 Promociones (Cohortes) con Fechas de Acceso
+* **Entidad propia (tabla `cohorts`):** nombre único, fecha de inicio (`starts_on`), fecha de cierre (`ends_on`) y descripción. `students.cohort` guarda el nombre, así que renombrar una promoción mueve a sus estudiantes con ella. Gestión en **🗂️ Promociones** del panel (`GET/POST /api/admin/cohorts`, `PATCH /api/admin/cohorts/:id`); cada cambio queda en la bitácora.
+* **Ventana de acceso ([`server/services/access.js`](server/services/access.js)):**
+  * *Por iniciar*: antes de la fecha de inicio el estudiante no puede iniciar sesión y se le dice desde cuándo.
+  * *Abierta*: entre inicio y cierre (ambos días incluidos), o siempre si la promoción no tiene fechas.
+  * *Cerrada*: después del cierre entra en **modo consulta**: ve su avance y descarga su certificado, pero el API rechaza con `403 COHORT_CLOSED` el registro de videos, partidas del simulador e intentos de examen. El curso muestra un aviso.
+  * Las fechas son de calendario en `APP_TIMEZONE` (por defecto `America/Bogota`). `students.start_date` (opcional) reemplaza el inicio de la promoción para un estudiante concreto; vacía, rige la promoción.
+* **Selladas:** una promoción cerrada y sellada (10.8) ya no se edita, no admite matrículas y nadie entra ni sale de ella.
+* **Métricas y KPIs Dinámicos:** por promoción, total de matriculados, pendientes de activación, desactivados, estudiantes con Aval IES aprobado ($\ge 90\%$), en instrucción, promedio de calificación e incidentes de integridad. Las promociones sin estudiantes también aparecen.
+* **Filtrado Reactivo y Búsqueda:** por promoción, por estado de la cuenta (activas, pendientes de activación, desactivadas: `?status=`) y búsqueda en tiempo real por nombre, correo o documento.
 
-### 10.2 Matriculación Automatizada y Correo de Inducción
-Al registrar a un nuevo estudiante desde el formulario administrativo (`POST /api/admin/students`), el sistema ejecuta de forma automática:
-1. Validación de no duplicidad de correo e inserción en la base de datos con asignación de cohorte y fecha de habilitación de acceso (`start_date`).
-2. Cifrado unidireccional de la contraseña (o generación de clave provisional segura) mediante `bcryptjs`.
-3. **Despacho Inmediato de Correo Institucional de Inducción:**
-   * **Credenciales Oficiales:** URL de acceso, usuario, contraseña asignada y **fecha habilitada de ingreso**.
-   * **Guía Operativa de 5 Pasos para el Cumplimiento del Estándar:**
-     * **Paso 1 (Enrolamiento Biométrico):** Captura de documento legal y registro facial ante la *Dra. Nova (IA)* para supervisión continua durante las evaluaciones.
-     * **Paso 2 (Ruta Curricular Secuencial):** Completitud obligatoria de los 5 módulos (25 pasos formativos) con protección anti-adelanto de video y lecturas en PDF.
-     * **Paso 3 (Puntos de Reserva en Simulador):** Prácticas en el simulador cinemático y geométrico para obtener hasta 500 Puntos de Reserva comodín.
-     * **Paso 4 (Evaluación Reglamentaria Final):** Presentación del examen de 50 preguntas bajo supervisión continua, exigiendo un **mínimo del 90%** y un **máximo de 3 intentos**.
-     * **Paso 5 (Certificación Criptográfica):** Generación de la constancia oficial con código QR y validación pública HMAC-SHA256 ante el hospital y el Ministerio de Educación.
-4. **Bitácora Forense (`email_logs`):** Cada despacho genera un registro con fecha, hora exacta, destinatario, promoción y estatus `'sent'`, disponible para consulta administrativa ante auditorías o reclamos legales.
+### 10.2 Matrícula (Individual o por CSV) y Correo de Bienvenida
+Al registrar a un estudiante (`POST /api/admin/students`, formulario **➕ Registrar Estudiante**):
+1. Valida el correo (formato y no duplicado), el tipo de documento y la fecha individual opcional. Si la promoción no existe la crea sin fechas (y lo registra en la bitácora); en una promoción sellada responde `409`.
+2. Crea la cuenta **pendiente de activación**: no se define ni se envía ninguna contraseña.
+3. Emite un enlace de activación de un solo uso (7 días) y encola el **correo de bienvenida**: enlace para crear la contraseña, usuario, fecha de acceso y la guía del curso (módulos, pasos, minijuegos y Puntos de Reserva, reglas del examen y certificado, todo tomado de `curriculum.js` y `examRules.js`).
+4. La respuesta incluye el enlace (`activationUrl`) para el admin: el panel lo muestra en un aviso con **Copiar enlace**, por si el correo no llega o el envío está en modo simulado.
 
-### 10.3 Evaluación del Estándar Institucional IES (6 Criterios Obligatorios)
+**Importación masiva (📥 Importar CSV, `POST /api/admin/students/import`):** columnas `nombre` y `correo` (obligatorias), `tipo_documento`, `numero_documento`, `institucion`, `promocion` y `fecha_inicio`; separador `;` o `,`, comillas, BOM y cabeceras sin importar tildes ni mayúsculas ([`server/utils/csv.js`](server/utils/csv.js)). Primero valida (`dryRun`, por defecto) y muestra una vista previa con los errores de cada fila: correo inválido, repetido en el archivo, ya registrado, promoción inexistente o sellada. Luego matricula **solo las filas válidas**, en una transacción, y envía a cada una su enlace de activación. Máximo 500 filas por archivo (la ruta acepta cuerpos de hasta 2 MB; el resto del API, 10 kB). Plantilla en `GET /api/admin/students/import/template`.
+
+### 10.3 Gestión de Estudiantes (⚙️ Gestionar)
+Cada fila del listado muestra el estado de la cuenta (*Pendiente de activación*, *Desactivada*) y abre una ficha (`GET /api/admin/students/:id`) para:
+* **Editar datos y cambiar de promoción** (`PATCH /api/admin/students/:id`): nombre, correo (único), documento, institución, promoción y fecha individual de acceso, con un motivo opcional. No se puede mover a nadie desde o hacia una promoción sellada.
+* **Enviar enlace de acceso** (`POST /api/admin/students/:id/access-link`): si la cuenta no está activada, un enlace de activación nuevo; si lo está, uno para restablecer la contraseña. Invalida el anterior, lo envía por correo (`sendEmail: false` para no enviarlo) y se lo muestra al admin para copiarlo.
+* **Desactivar** (`POST …/deactivate`, motivo obligatorio): corta el acceso de inmediato, incluidas las sesiones abiertas; no borra nada (avance, intentos e historial se conservan) y deja de recibir recordatorios. **Reactivar** (`POST …/reactivate`) lo devuelve.
+* **Historial**: las acciones de los administradores sobre el estudiante y sus correos con el estado de cada uno.
+
+### 10.4 Bitácora de Acciones del Administrador (`admin_actions`)
+Toda modificación hecha desde el panel queda registrada con el administrador, la acción, el objetivo (estudiante, promoción o correo), el motivo y el detalle antes → después: crear y editar promociones, matricular (individual o CSV), editar datos, cambiar de promoción, desactivar, reactivar, generar enlaces de acceso, reenviar la guía, enviar recordatorios, reintentar correos y sellar promociones. Se consulta en **🧾 Bitácora de Acciones** (`GET /api/admin/actions`, filtrable por `targetType`/`targetId`) y en la ficha de cada estudiante. Nunca guarda enlaces ni contraseñas.
+
+### 10.5 Correo: Cola, Estados Reales y SMTP ([`server/services/mailer.js`](server/services/mailer.js))
+* **Cola persistente en `email_logs`:** cada correo se encola (`queued`) y un proceso del backend lo envía en segundos; si falla, lo reintenta con espera creciente (1, 5, 15 y 60 min) y tras 5 intentos queda `failed`, con el error visible en la bitácora y un botón **Reintentar** (`POST /api/admin/email-logs/:id/retry`).
+* **Estados reales:** `sent` (entregado al servidor SMTP), `simulated` (modo sin SMTP: no salió), `queued` y `failed`. La migración 2 marcó como `simulated` los registros anteriores, que decían `sent` aunque ningún correo salía del servidor.
+* **Sin secretos en la bitácora:** `body_content` guarda el HTML con los enlaces privados ocultos. El contenido real va cifrado (AES-256-GCM) en `payload_encrypted` y se borra al enviarse. La migración 2 ocultó también las contraseñas temporales que las inducciones anteriores habían guardado en texto plano.
+* **Transporte:** `MAIL_TRANSPORT=smtp` con `SMTP_HOST`, `SMTP_PORT` (465 = TLS directo; 587 = STARTTLS), `SMTP_USER`, `SMTP_PASS` y `MAIL_FROM`. Sirve para cualquier proveedor (Amazon SES, Brevo, Postmark, Microsoft 365, Google Workspace…). Sin `SMTP_HOST` el modo es `log` (simulado). En producción el arranque avisa si no hay SMTP, y `/api/health` informa `mail: smtp | log`.
+* **Plantillas ([`server/services/emailService.js`](server/services/emailService.js)):** bienvenida con enlace de activación (`induction_activation`), guía para cuentas ya activadas (`induction`), restablecimiento de contraseña (`password_reset`) y recordatorio de avance (`progress_reminder`). Los enlaces usan `APP_PUBLIC_URL`.
+
+### 10.6 Evaluación del Estándar Institucional IES (6 Criterios Obligatorios)
 Al seleccionar a cualquier estudiante y pulsar **"🔍 Ver Estándar IES"**, la plataforma evalúa en servidor (`GET /api/admin/compliance/:studentId`) el cumplimiento riguroso de los **6 limitantes del estándar de acreditación**:
 
 | Criterio | Código | Condición Reglamentaria | Estado Evaluado |
 | :--- | :--- | :--- | :--- |
 | **1. Identificación y Biometría** | `STD_BIO_ID` | Documento legal institucional y vector facial de 128 puntos registrado. | `is_onboarded == 1` && `id_number` válido && `face_descriptor` presente. |
-| **2. Completitud Curricular** | `STD_CURRICULUM` | Aprobación del 100% de la malla (25 de 25 pasos obligatorios sin saltos). | `completedSteps >= 25` en tabla `course_progress`. |
-| **3. Calificación en Examen** | `STD_EXAM_SCORE` | Aprobación con un puntaje mínimo del 90% (45 de 50 preguntas). | `exam_score >= 90`. |
+| **2. Completitud Curricular** | `STD_CURRICULUM` | Aprobación del 100% de la malla (26 de 26 pasos obligatorios sin saltos). | Pasos completados de `COURSE_STEPS` ≥ `TOTAL_COURSE_STEPS` en `course_progress`. |
+| **3. Calificación en Examen** | `STD_EXAM_SCORE` | Nota mínima del 90% en intentos de 10 preguntas (`examRules.js`). | `exam_score >= EXAM_PASS_SCORE_PERCENT`. |
 | **4. Límite de Intentos** | `STD_MAX_ATTEMPTS` | Máximo 3 intentos de examen permitidos según reglamento IES. | `exam_attempts <= 3`. |
 | **5. Integridad de Supervisión** | `STD_PROCTORING_INTEGRITY` | Tolerancia máxima de 5 incidencias acumuladas de cámara o foco. | `(proctoring_incidents + focus_violations) <= 5`. |
 | **6. Emisión Criptográfica QR** | `STD_CRYPTO_CERT` | Código HMAC-SHA256 generado y trazable en base de datos. | Registro `'exam'` con `certificate_code` presente. |
@@ -550,12 +602,12 @@ Al seleccionar a cualquier estudiante y pulsar **"🔍 Ver Estándar IES"**, la 
   * 🟢 **CUMPLE EL ESTÁNDAR (Aval IES / Certificación Aprobada):** Habilita la expedición de actas formales y la descarga del certificado oficial en PDF con QR.
   * 🔴 **NO CUMPLE EL ESTÁNDAR:** Despliega una alerta forense con el listado explícito de los requisitos pendientes que el estudiante debe solventar antes de aspirar al aval institucional.
 
-### 10.4 Exportación Oficial para Auditoría Ministerial (CSV)
+### 10.7 Exportación Oficial para Auditoría Ministerial (CSV)
 El endpoint `GET /api/admin/export-audit?cohort=...` genera un archivo descargable con formato estandarizado que incluye:
 * Codificación con **UTF-8 BOM (`\uFEFF`)** y delimitador de punto y coma (`;`), asegurando que Microsoft Excel en entornos hispanohablantes abra de forma nativa sin distorsión de tildes o caracteres especiales.
-* **16 Columnas Oficiales de Auditoría:** `ID Estudiante`, `Nombre Completo`, `Correo Electrónico`, `Tipo Documento`, `Número Documento`, `Institución Hospitalaria`, `Promoción (Cohorte)`, `Fecha Habilitada Acceso`, `Pasos Curriculares (de 25)`, `Nota Examen (%)`, `Intentos Examen`, `Incidentes de Supervisión`, `Enrolamiento Biométrico`, `Cumple Estándar IES`, `Código Certificado QR` y `Fecha de Certificación`.
+* **16 Columnas Oficiales de Auditoría:** `ID Estudiante`, `Nombre Completo`, `Correo Electrónico`, `Tipo Documento`, `Número Documento`, `Institución Hospitalaria`, `Promoción (Cohorte)`, `Fecha Habilitada Acceso`, `Pasos Curriculares (de 26)`, `Nota Examen (%)`, `Intentos Examen`, `Incidentes de Supervisión`, `Enrolamiento Biométrico`, `Cumple Estándar IES`, `Código Certificado QR` y `Fecha de Certificación`.
 
-### 10.5 Herramientas de Calidad de Vida (QoL) y Auditoría Ministerial / IES
+### 10.8 Herramientas de Calidad de Vida (QoL) y Auditoría Ministerial / IES
 Para satisfacer los más altos estándares de gobernanza académica y simplificar la gestión de directores de programa, se integran cuatro capacidades avanzadas:
 
 #### 1. Acta Colectiva / Libro Oficial de Calificaciones IES (PDF)
@@ -572,14 +624,14 @@ Para satisfacer los más altos estándares de gobernanza académica y simplifica
 * **Garantía Forense Anti-Alteración:** Una vez finalizado el ciclo lectivo de una cohorte, el administrador ejecuta el cierre formal. El servidor genera un **Hash SHA-256 inmutable** concatenando los registros curriculares y notas de todos los matriculados junto con un timestamp de cierre, almacenándolo en la tabla `cohort_closures`.
 * **Bloqueo de Modificaciones:** Cualquier intento de cerrar nuevamente responde con `409 Conflict`. El panel administrativo exhibe un candado dorado con el sello `Sello SHA-256: [hash]` y la fecha de sellado, imposibilitando la alteración retroactiva de calificaciones ante auditorías externas.
 
-#### 3. Reenvío Inmediato de Credenciales y Guía Operativa
+#### 3. Reenvío Inmediato de la Guía de Inducción
 * **Endpoint:** `POST /api/admin/resend-email/:studentId`
-* **Solución de Soporte Inmediata:** Botón directo en la tabla de estudiantes (**"✉️ Reenviar Guía"**) que dispara nuevamente el paquete completo de inducción (URL, credenciales, fecha habilitada y guía de 5 pasos), solventando al instante pérdidas de correo o problemas de spam reportados por el usuario, registrando cada intento en la bitácora forense `email_logs`.
+* **Solución de Soporte Inmediata:** Botón directo en la tabla de estudiantes (**"✉️ Reenviar Guía"**) que reenvía el correo de bienvenida con la fecha de acceso y la guía del curso. Si la cuenta aún no se activó, incluye un enlace de activación nuevo (el anterior deja de servir); si ya se activó, recuerda cómo ingresar y cómo recuperar la contraseña. Nunca incluye contraseñas. Queda en `email_logs` y en la bitácora de acciones; no se envía a cuentas desactivadas.
 
 #### 4. Semáforo de Rezago Académico (+7 Días) y Recordatorio Automatizado
 * **Endpoint:** `POST /api/admin/send-reminder/:studentId`
 * **Detección Preventiva de Deserción:** El sistema analiza en tiempo real la fecha de habilitación (`start_date`) y la última actividad del alumno. Si han transcurrido más de 7 días sin completar la malla curricular ni aprobar el examen, se asigna automáticamente una insignia de alerta visual: **"⚠️ Rezago (+7d)"**.
-* **Acción en 1 Clic:** El administrador dispone del botón **"🔔 Recordatorio"** para despachar un correo institucional motivacional que resume los pasos pendientes para alcanzar el estándar IES y evitar la caducidad de su cupo.
+* **Acción en 1 Clic:** El administrador dispone del botón **"🔔 Recordatorio"** para despachar un correo institucional motivacional que resume los pasos pendientes para alcanzar el estándar IES y evitar la caducidad de su cupo. Cada envío queda en la bitácora de acciones con el avance del estudiante en ese momento; no se envía a cuentas desactivadas.
 
 ---
 
@@ -625,6 +677,21 @@ TEST_RESET_SECRET=test-reset-secret-local
 # SQLITE_PATH=./database.sqlite
 # Retención de exam_logs en días; sin definir o 0 se conservan siempre (evidencia de auditoría)
 # EXAM_LOG_RETENTION_DAYS=0
+
+# URL pública del frontend para los enlaces de los correos (activación, restablecimiento, ingreso)
+APP_PUBLIC_URL=http://localhost:3000
+# Zona horaria de las fechas de acceso de las promociones
+# APP_TIMEZONE=America/Bogota
+
+# Correo (sección 10.5). Sin SMTP_HOST los correos quedan "simulated" (no salen).
+# SMTP_HOST=smtp.proveedor.com
+# SMTP_PORT=587                   # 465 = TLS directo; 587 = STARTTLS
+# SMTP_SECURE=                    # true/false; por defecto true solo con el puerto 465
+# SMTP_USER=usuario
+# SMTP_PASS=contraseña
+# MAIL_FROM="C-Arm Master <no-reply@midominio.com>"
+# MAIL_TRANSPORT=smtp             # smtp | log (fuerza el modo)
+# MAIL_QUEUE_INTERVAL_MS=10000    # cada cuánto revisa la cola
 ```
 El límite global de la API (200 solicitudes / 15 min en producción) se cuenta **por estudiante autenticado** y, sin sesión, por IP. Así los estudiantes que comparten la red de un hospital no agotan un cupo común. Detrás de un proxy define `TRUST_PROXY` para que la IP sea la del cliente.
 
@@ -690,10 +757,10 @@ GitHub (Dependabot) revisa **dos** lockfiles en `ArcoC/`, y cada uno se instala 
 
 ## 13. Suite de Pruebas Automatizadas (Playwright)
 
-El proyecto cuenta con un conjunto integral de **78 pruebas E2E automatizadas** organizadas en **22 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
+El proyecto cuenta con un conjunto integral de **96 pruebas E2E automatizadas** organizadas en **25 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
 
 ```bash
-# Ejecutar todas las 22 suites E2E (78 pruebas) sobre la base de desarrollo (SQLite)
+# Ejecutar todas las 25 suites E2E (96 pruebas) sobre la base de desarrollo (SQLite)
 npx playwright test
 
 # La misma suite sobre un PostgreSQL 16 desechable (sin Docker; detén antes los servidores de desarrollo)
@@ -722,6 +789,7 @@ npx playwright test tests/e2e/16-student-spaced-interaction-flow.test.js
 [`scripts/pg-test/run-e2e.mjs`](scripts/pg-test/run-e2e.mjs) levanta un **PostgreSQL 16 desechable** con el paquete `embedded-postgres` (la primera vez lo instala en `scripts/pg-test/node_modules`; no requiere Docker ni instalar nada en el sistema). Luego crea una base vacía, aplica migraciones y seeds (administrador y banco de 50 preguntas), corre Playwright con `DATABASE_URL` apuntando a ella y al terminar lo borra todo. Con `TEST_DATABASE_URL` usa otra base en lugar de levantar una.
 * Los servidores de desarrollo deben estar detenidos: con `DATABASE_URL` definida (y en CI), `playwright.config.js` nunca reutiliza servidores ya abiertos, que usarían la base SQLite de desarrollo.
 * Va en una carpeta aparte, con su propio `package.json`, para no sumar los binarios de PostgreSQL a las dependencias de la aplicación ni a sus imágenes Docker.
+* La base se crea en UTF8 (como en producción) y su contraseña se genera al azar en cada ejecución: no hay credenciales fijas en el repositorio (GitGuardian marcaba la anterior, `postgres/postgres`).
 
 ### Integración Continua ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml))
 En cada push a `main` y en cada pull request:
@@ -729,7 +797,7 @@ En cada push a `main` y en cada pull request:
 * **E2E sobre SQLite** (base nueva en el runner, con seeds) y **E2E sobre PostgreSQL** (`npm run test:pg`), en paralelo. Si fallan, se suben los artefactos de `test-results` (trazas de los reintentos).
 * Las variables del workflow son exclusivas de prueba, no secretos de producción. Las pruebas que necesitan los videos definitivos o el build WebGL se omiten solas porque esos archivos no están en git.
 
-### Matriz de Cobertura de Pruebas (78 Tests / 22 Suites)
+### Matriz de Cobertura de Pruebas (96 Tests / 25 Suites)
 
 Las reglas que dependen del tiempo real (visualización mínima de videos y duración mínima de partidas) solo rigen con `NODE_ENV=production`, por eso no entran en esta suite, que corre en desarrollo. Se verifican arrancando la API en producción: un video sin inicio o completado de inmediato responde `403`, un resultado instantáneo `422`, y el uso legítimo se acepta (video a los 75 s, partida de 32 s).
 
@@ -751,12 +819,15 @@ Las reglas que dependen del tiempo real (visualización mínima de videos y dura
 | **14** | **`14-frontend-resilience-and-video-scrubbing.test.js`** | **Resiliencia de UI y Anti-Adelanto de Video:** Interceptación y reversión automática de saltos temporales no autorizados en el reproductor de video educativo (`currentTime` scrub revertido al progreso real visto); preservación y restauración de respuestas marcadas en el examen tras recargas accidentales (`F5` o caída de pestaña) vía `sessionStorage`; y redirección forzada a `/login` al intentar navegar a rutas protegidas (`/course`, `/exam`, `/admin`) sin credenciales válidas. |
 | **15** | **`15-student-single-sitting-flow.test.js`** | **Recorrido Integral en una Sola Sentada (UI/UX):** Flujo completo continuo de estudiante nuevo desde el registro inicial y primer login, redirección automática a Onboarding, diligenciamiento de datos de filiación y aceptación de Habeas Data, enrolamiento biométrico facial (128 flotantes cifrados AES-256-GCM), bienvenida al Quirófano Virtual (0%), interacción y ganancia de Puntos de Reserva en simulador en vivo, avance secuencial por los 26 pasos del curso (jugando una partida en cada minijuego del módulo 1), desbloqueo reactivo del examen final, uso de comodín 50/50 consumiendo puntos, aprobación con 100%, renderizado del banner de graduado y validación de descarga de certificado oficial con cabecera binaria `%PDF-`. Incluye 11 capturas de pantalla de la UI/UX. |
 | **16** | **`16-student-spaced-interaction-flow.test.js`** | **Aprendizaje Espaciado Multisesión (UI/UX):** Simulación de un estudiante real a lo largo de un período de 27 días con intervalos de 3 días por sesión, avanzando a un ritmo del ~10% por sesión (2 a 3 pasos por interacción). En cada sesión se valida el cierre de sesión (`/api/logout`), la persistencia inmutable del progreso, los módulos aprobados y los puntos de reserva al reingresar por `/login`, la secuencialidad estricta (pasos posteriores bloqueados con candado), la finalización gradual de los módulos 1 al 5 (el módulo 1 con sus 3 videos y 3 partidas en el simulador) y la graduación exitosa en la sesión 10 con examen aprobado y certificado generado. Incluye 7 capturas de pantalla de la experiencia visual. |
-| **17** | **`17-admin-cohorts-and-compliance.test.js`** | **Gestión de Promociones, Correo de Inducción y Estándar IES:** Matriculación de estudiantes en promociones segregadas (*Promoción 1*, *Promoción 2*), verificación del despacho automático del correo de confirmación de matrícula con credenciales, fecha habilitada de inicio y guía de 5 pasos en `email_logs`; filtrado dinámico en tiempo real por cohorte en el panel administrativo; evaluación interactiva del Modal de Estándar IES demostrando rechazo fundamentado en estudiantes en curso y otorgamiento del veredicto *"CUMPLE EL ESTÁNDAR (Aval IES)"* para estudiantes graduados (6 criterios con check verde y código SHA-256); y exportación legal en archivo CSV para auditoría ministerial e IES con UTF-8 BOM. |
+| **17** | **`17-admin-cohorts-and-compliance.test.js`** | **Gestión de Promociones, Correo de Inducción y Estándar IES:** Matriculación de estudiantes en promociones segregadas (*Promoción 1*, *Promoción 2*, creada antes por API) sin contraseña, verificación del correo de bienvenida con enlace de activación en `email_logs` (plantilla `induction_activation`, estado `simulated` o `sent`) y del aviso con el enlace para el admin; filtrado dinámico en tiempo real por cohorte en el panel administrativo; evaluación interactiva del Modal de Estándar IES demostrando rechazo fundamentado en estudiantes en curso y otorgamiento del veredicto *"CUMPLE EL ESTÁNDAR (Aval IES)"* para estudiantes graduados (6 criterios con check verde y código SHA-256); y exportación legal en archivo CSV para auditoría ministerial e IES con UTF-8 BOM. |
 | **18** | **`18-admin-qol-and-audit-tools.test.js`** | **Herramientas de Calidad de Vida (QoL) y Auditoría Ministerial:** Descarga y validación binaria (`%PDF-`) del Acta Colectiva / Libro de Calificaciones IES con membrete formal y códigos QR; sellado y cierre criptográfico inmutable de promociones mediante hash SHA-256 (con bloqueo `409 Conflict` ante intentos de re-cierre); reenvío instantáneo de correos de inducción y guía operativa con trazabilidad forense; y detección de rezago académico (+7 días) con cálculo automático en UI y despacho de recordatorios personalizados. |
 | **19** | **`19-module1-simulator-integration.test.js`** | **Módulo 1 de punta a punta:** la malla del cliente coincide con `COURSE_STEPS` del servidor (26 pasos, módulo 1 = 3 videos + 3 minijuegos) y cada video tiene su duración registrada; los videos definitivos se sirven (con sesión) con soporte de rangos y *faststart*; un minijuego aporta como máximo 50 puntos; API del simulador (secuencia, escena/fase decididas por la API, niveles 10/5/0, idempotencia, fase y tiempo incoherentes rechazados, techo de 500, finalizar exige una partida, 409 tras finalizar, un estudiante no puede usar la partida de otro); contrato del iframe con un build simulado que habla el mismo protocolo que Unity (URL de lanzamiento, mensajes de otro intento ignorados, resultado registrado y acuse `phase-ack` devuelto al simulador); y, si existe `client/public/webgl`, el build real: Unity carga en el iframe, lee el lanzamiento y procesa el acuse en C#. |
 | **20** | **`20-exam-integrity-and-proctoring.test.js`** | **Integridad del examen y proctoring en servidor:** sin intento abierto no hay preguntas, envío ni comodín (409); el set de preguntas es fijo por intento; se rechazan respuestas fuera de `a`–`d` o de otras preguntas; la calificación no revela qué respuestas fueron correctas y cierra el intento; quien ya aprobó no puede abrir otro; la página muestra el motivo real cuando la API rechaza las preguntas (curso incompleto) en lugar de caerse; con los 3 intentos agotados la página lo explica y deshabilita el botón antes de empezar, y la API responde `403` si se la llama igualmente; y, por WebSocket, la supervisión suspende sin rostro, cierra el intento en el servidor y no castiga a quien terminó con `end_exam`. |
 | **21** | **`21-content-protection-and-video-watch.test.js`** | **Contenido protegido y visualización de videos:** sin sesión, videos, build WebGL, PDF e imágenes del curso responden `401` y abrir un PDF lleva al login; con sesión se sirven con `Cache-Control: private`; el backend ya no publica las fuentes Markdown de `ArcoC/public`; el inicio de reproducción se registra una sola vez, solo para videos y respetando la secuencia; y la página lo registra al reproducir. |
 | **22** | **`22-base-platform-and-postgres-parity.test.js`** | **Bases de la plataforma y paridad PostgreSQL** (corre igual en ambos motores): `/api/health` informa motor y `schemaVersion`; el código del certificado (cabecera `X-Verification-Code`) es el que valida `/api/verify` y no cambia al volver a descargarlo; `/api/admin/cohorts` responde con totales numéricos; el estándar IES y el CSV usan las reglas vigentes (`examRules.js`, 26 pasos) y no textos fijos («45/50», «de 25»); `/api/student/me` entrega las reglas del examen y los intentos restantes sin campos sensibles; en el curso, quien reprobó ve «❌ No aprobado» con su nota y puede reintentar con los intentos restantes, quien agotó los intentos ve el examen deshabilitado, quien aprobó ve «✅ Aprobado» con su nota; y «Continuar donde quedé» abre el módulo y resalta el paso pendiente. |
+| **23** | **`23-enrollment-activation-and-access.test.js`** | **Matrícula, activación y acceso (API):** la matrícula no lleva contraseña y la cuenta pendiente no entra; el enlace de activación se valida (`token-info` con nombre sin títulos y correo enmascarado), rechaza contraseñas débiles, abre la sesión y no sirve dos veces; desactivar exige motivo, corta la sesión abierta y el login, bloquea enlaces y recordatorios, y reactivar lo devuelve, todo en la bitácora; las fechas de la promoción impiden entrar antes del inicio (la fecha individual lo reemplaza) y dejan el curso en modo consulta tras el cierre (progreso, partidas y examen → `403 COHORT_CLOSED`); «olvidé mi contraseña» responde igual exista o no el correo, envía activación o restablecimiento según el caso, y restablecer cierra las demás sesiones; la importación CSV valida fila por fila (repetidos, inválidos, existentes, promoción inexistente; comillas y `;`) y matricula solo las válidas; promociones con fechas validadas, nombre único, renombrado que arrastra a sus estudiantes y sellado que bloquea cambios y matrículas. |
+| **24** | **`24-admin-management-and-account-pages.test.js`** | **Páginas de acceso y gestión del admin (interfaz):** activación desde `/activar` hasta el registro biométrico; enlaces inválidos o incompletos con indicaciones; «¿Olvidaste tu contraseña?» y `/restablecer` de punta a punta hasta iniciar sesión; cuenta desactivada que ve el motivo al entrar; aviso de modo consulta con la promoción cerrada; crear y editar promociones desde el panel; ficha **⚙️ Gestionar** (editar, cambiar de promoción con motivo, enlace de acceso, desactivar y reactivar, historial) y su reflejo en la bitácora general; importación CSV con vista previa y matrícula de las filas válidas; y filtro por estado de la cuenta. |
+| **25** | **`25-smtp-delivery.test.js`** | **Entrega por SMTP real:** un servidor SMTP local (`smtp-server`) recibe lo que envía el transporte de la API con la configuración `SMTP_*`; comprueba la elección del modo (`smtp`/`log`) y del TLS según el puerto, la autenticación, remitente y destinatario, el asunto y que el enlace de activación llegue completo en HTML y texto, sin contraseñas; y que unas credenciales SMTP incorrectas hagan fallar el envío. |
 
 ---
 
