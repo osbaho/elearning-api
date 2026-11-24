@@ -604,6 +604,7 @@ Los videos definitivos y el build de Unity son artefactos pesados: **no se versi
   ```
   Usa la plantilla `Assets/WebGLTemplates/CArmEmbed` (canvas a pantalla completa y puente de mensajes con la plataforma). La compresión WebGL está desactivada, así que no se requieren cabeceras `Content-Encoding` especiales.
 * Si prefieres versionarlos, usa Git LFS: GitHub rechaza archivos de más de 100 MB.
+* El lint del cliente (`npm --workspace=client run lint`) no analiza el build WebGL (`client/public/webgl/**`) ni los bundles minificados de terceros (`client/public/**/*.min.js`, como `workers/face-api.min.js`): no son código del proyecto. Ver `globalIgnores` en `client/eslint.config.mjs`.
 
 ### 6. Dependencias npm y Alertas de Seguridad (Dependabot)
 Versiones clave: **Next.js 16.4.6** (con `eslint-config-next` 16.4.6) y **React 19.2.8**. En Next 16, la versión 16.4.1 corrige las alertas críticas y altas, y la 16.4.5 las moderadas. La serie 16.3 no recibió esos parches: su última versión, la 16.3.8, sigue afectada.
@@ -651,6 +652,8 @@ npx playwright test tests/e2e/15-student-single-sitting-flow.test.js
 # Ejecutar el recorrido de aprendizaje espaciado (intervalos de 3 días)
 npx playwright test tests/e2e/16-student-spaced-interaction-flow.test.js
 ```
+
+**Base de datos para la suite:** basta con una BD recién creada con `npm run seed`, que crea al administrador. Los estudiantes de prueba los crea `POST /api/test-reset` cuando se necesitan (`server.js`, solo fuera de producción). Un estudiante recién creado queda en el mismo estado que uno existente reiniciado: onboarding completo, 150 Puntos de Reserva y sin progreso ni intentos de examen. Las pruebas que necesitan otro punto de partida lo piden explícitamente: los recorridos 15 y 16 empiezan con `is_onboarded: 0` y `reserve_points: 0`. Así, la primera pasada sobre una BD nueva da el mismo resultado que las siguientes. No hay un script para sembrar estudiantes: se retiró `npm run seed:student`, que apuntaba a un archivo inexistente.
 
 ### Matriz de Cobertura de Pruebas (69 Tests / 21 Suites)
 

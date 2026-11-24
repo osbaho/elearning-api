@@ -48,7 +48,7 @@ export default function OnboardingPage() {
         currentVideo.srcObject = null;
       }
     };
-  }, [user, router]);
+  }, [loading, user, router]);
 
   useEffect(() => {
     // A-04: Only load face-api models when actually needed (not in mock mode, not already onboarded)
