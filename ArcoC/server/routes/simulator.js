@@ -2,6 +2,7 @@ import express from 'express';
 import crypto from 'crypto';
 import { get, run, withTransaction, getPgPool } from '../config/db.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { requireOpenAccess } from '../services/access.js';
 import { isPracticeStep, previousStepOf } from '../config/curriculum.js';
 import { getSimulatorEntry } from '../config/simulatorCatalog.js';
 import {
@@ -112,7 +113,7 @@ router.get('/steps/:stepId', authenticateToken, async (req, res) => {
 });
 
 // POST /api/simulator/attempts
-router.post('/attempts', authenticateToken, async (req, res) => {
+router.post('/attempts', authenticateToken, requireOpenAccess, async (req, res) => {
   try {
     const stepId = req.body?.stepId;
     const entry = getSimulatorEntry(stepId);
@@ -147,7 +148,7 @@ router.post('/attempts', authenticateToken, async (req, res) => {
 });
 
 // POST /api/simulator/attempts/:attemptId/result
-router.post('/attempts/:attemptId/result', authenticateToken, async (req, res) => {
+router.post('/attempts/:attemptId/result', authenticateToken, requireOpenAccess, async (req, res) => {
   const { attemptId } = req.params;
   if (!UUID_PATTERN.test(attemptId)) {
     return res.status(400).json({ error: 'Identificador de intento inválido.' });

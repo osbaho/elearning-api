@@ -10,6 +10,12 @@ test.describe('Admin Cohorts Management, Automated Induction Email & IES Complia
     await performLogin(page, 'admin@admin.com', ADMIN_PASSWORD, false);
     await expect(page).toHaveURL(/\/admin/);
 
+    // Las promociones son entidades: «Promoción 2» debe existir para elegirla en el formulario
+    // (en una base nueva no existe; si ya existe, la API responde 409 y no pasa nada)
+    const ensureCohort = await page.request.post('http://localhost:5000/api/admin/cohorts', { data: { name: 'Promoción 2' } });
+    expect([201, 409]).toContain(ensureCohort.status());
+    await page.reload();
+
     // 2. Abrir modal de registro de nuevo estudiante
     const registerBtn = page.locator('#btn-register-student-modal');
     await expect(registerBtn).toBeVisible();
@@ -23,7 +29,7 @@ test.describe('Admin Cohorts Management, Automated Induction Email & IES Complia
     await page.fill('#reg-input-start-date', '2026-10-15');
     await page.fill('#reg-input-id-number', '1098765432');
     await page.fill('#reg-input-institution', 'Hospital Universitario San Rafael');
-    await page.fill('#reg-input-password', 'ClaveSegura2026!');
+    // Sin contraseña: el estudiante la crea con su enlace de activación
 
     // Enviar registro
     await page.click('#btn-submit-registration');
@@ -72,7 +78,13 @@ test.describe('Admin Cohorts Management, Automated Induction Email & IES Complia
     const emailEntry1 = emailLogsData.logs.find(l => l.recipient_email === uniqueEmail1.toLowerCase());
     expect(emailEntry1).toBeDefined();
     expect(emailEntry1.subject).toContain('Confirmación de Matrícula - Promoción 1');
-    expect(emailEntry1.status).toBe('sent');
+    // 'sent' con SMTP configurado; 'simulated' sin SMTP (desarrollo y pruebas)
+    expect(['sent', 'simulated']).toContain(emailEntry1.status);
+    expect(emailEntry1.template).toBe('induction_activation');
+
+    // El enlace de activación de la última matrícula queda a mano para el admin
+    await expect(page.locator('#enrollment-banner')).toContainText(uniqueEmail2);
+    await expect(page.locator('#enrollment-activation-url')).toHaveValue(/\/activar\?token=/);
 
     const emailEntry2 = emailLogsData.logs.find(l => l.recipient_email === uniqueEmail2.toLowerCase());
     expect(emailEntry2).toBeDefined();

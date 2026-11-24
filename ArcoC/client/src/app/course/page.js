@@ -290,6 +290,15 @@ export default function Course() {
 
         {/* Contenido (El scroll se maneja con la página principal) */}
         <main className="course-main-content">
+          {user?.access?.state === 'closed' && (
+            <div className="card mb-24 access-banner" id="access-closed-banner" role="status">
+              <strong>🔒 Tu promoción cerró{user.access.endsOn ? ` el ${user.access.endsOn.split('-').reverse().join('/')}` : ''}.</strong>
+              <p className="text-secondary text-sm m-0 mt-4">
+                Puedes consultar tu avance{examPassed ? ' y descargar tu certificado' : ''}, pero ya no registrar videos,
+                partidas ni intentos de examen. Si necesitas más tiempo, escríbele al administrador del curso.
+              </p>
+            </div>
+          )}
           {examPassed && (
             <div className="card mb-24 flex-between items-center flex-wrap gap-16 animate-fade-in card-course-passed">
               <div>

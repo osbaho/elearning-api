@@ -1,6 +1,7 @@
 import express from 'express';
 import { run, get } from '../config/db.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { requireOpenAccess } from '../services/access.js';
 import { isCourseStep, isVideoStep, minWatchSecondsFor, previousStepOf } from '../config/curriculum.js';
 import { getSimulatorEntry } from '../config/simulatorCatalog.js';
 
@@ -25,7 +26,7 @@ async function sequenceBlockMessage(studentId, stepId) {
 
 // POST /api/progress/:moduleId/start — el estudiante empezó a reproducir un video.
 // Registra solo el primer inicio: es el punto desde el que se mide el tiempo mínimo de visualización.
-router.post('/:moduleId/start', authenticateToken, async (req, res) => {
+router.post('/:moduleId/start', authenticateToken, requireOpenAccess, async (req, res) => {
   try {
     const { moduleId } = req.params;
     const studentId = req.user.id;
@@ -50,7 +51,7 @@ router.post('/:moduleId/start', authenticateToken, async (req, res) => {
 });
 
 // POST /api/progress/:moduleId
-router.post('/:moduleId', authenticateToken, async (req, res) => {
+router.post('/:moduleId', authenticateToken, requireOpenAccess, async (req, res) => {
   try {
     const { moduleId } = req.params;
     const studentId = req.user.id;

@@ -1,6 +1,7 @@
 import express from 'express';
 import { get, run, all, getPgPool, withTransaction } from '../config/db.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { requireOpenAccess } from '../services/access.js';
 import { generateCertificatePDF, verifyCertificateCode, calculateVerificationCode } from '../utils/certificate.js';
 import { TOTAL_COURSE_STEPS, countCompletedCourseSteps, isPracticeStep } from '../config/curriculum.js';
 import { MAX_RESERVE_POINTS, clampToReserveCap } from '../config/reservePoints.js';
@@ -151,7 +152,7 @@ router.post('/add-points', authenticateToken, async (req, res) => {
 });
 
 // POST /api/use-wildcard
-router.post('/use-wildcard', authenticateToken, async (req, res) => {
+router.post('/use-wildcard', authenticateToken, requireOpenAccess, async (req, res) => {
   try {
     const { question_id } = req.body; // E-4: `cost` ignorado — siempre se usa WILDCARD_COST
     const { id: studentId } = req.user;
@@ -221,7 +222,7 @@ router.post('/use-wildcard', authenticateToken, async (req, res) => {
 });
 
 // POST /api/submit-exam
-router.post('/submit-exam', authenticateToken, async (req, res) => {
+router.post('/submit-exam', authenticateToken, requireOpenAccess, async (req, res) => {
   try {
     const { answers } = req.body;
     const { id: studentId } = req.user;
@@ -352,7 +353,7 @@ router.get('/certificate', authenticateToken, async (req, res) => {
 });
 
 // POST /api/start-exam
-router.post('/start-exam', authenticateToken, async (req, res) => {
+router.post('/start-exam', authenticateToken, requireOpenAccess, async (req, res) => {
   try {
     const { id: studentId } = req.user;
 
