@@ -118,7 +118,9 @@ ArcoC/
 │   │   ├── admin.js               # Listado, auditoría IES, CSV, PDF, sellado, reenvío y recordatorios
 │   │   ├── adminManagement.js     # Promociones, matrícula (individual y CSV), edición, estado de cuentas, bitácora
 │   │   ├── adminProgress.js       # Seguimiento del avance por promoción y ficha del estudiante
-│   │   └── adminTestStudents.js   # Herramientas para estudiantes de prueba (reiniciar, llevar a un paso, copiar)
+│   │   ├── adminTestStudents.js   # Herramientas para estudiantes de prueba (reiniciar, llevar a un paso, copiar)
+│   │   ├── adminSupportCases.js   # Bandeja de casos reportados y respuesta al estudiante
+│   │   └── supportCases.js        # «Reportar un problema» del estudiante y sus reportes
 │   ├── utils/
 │   │   ├── certificate.js         # Generación de PDF (PDFKit) y validación pública
 │   │   ├── cohortActa.js          # Acta colectiva y libro de calificaciones por promoción (PDF)
@@ -134,7 +136,8 @@ ArcoC/
 │   │   ├── preview.js             # Modo revisión del administrador (recorre el curso sin registrar nada)
 │   │   ├── launchReadiness.js     # Qué falta para el lanzamiento: videos, minijuegos y banco de preguntas
 │   │   ├── progressTracking.js    # Avance, mejor nivel por minijuego, última actividad, alertas y ficha
-│   │   └── testStudents.js        # Estudiantes de prueba: exclusión de estadísticas y herramientas
+│   │   ├── testStudents.js        # Estudiantes de prueba: exclusión de estadísticas y herramientas
+│   │   └── supportCases.js        # Validación y formato de los casos reportados
 │   └── scripts/
 │       ├── seed.js                # Inicialización de cuenta de Administrador
 │       ├── seed_50_questions.js   # Banco oficial de 50 preguntas médicas (actualizado a 2026/ACHS)
@@ -169,7 +172,9 @@ ArcoC/
 │       │   ├── admin/_components/ # Promociones, gestión, importación CSV, bitácora, seguimiento y preparación del lanzamiento
 │       │   └── admin/estudiantes/[id]/ # Ficha completa del estudiante
 │       ├── components/
-│       │   ├── ModuleCard.js      # Tarjeta de módulo con estado visual
+│       │   ├── ModuleCard.js      # Tarjeta de módulo con estado visual y «Reportar un problema»
+│       │   ├── ReportProblemButton.js # «Reportar un problema»: botón y modal (portal)
+│       │   ├── MyReportsButton.js # «Mis reportes» del estudiante
 │       │   ├── VideoPlayer.js     # Reproductor con control de adelanto (scrubbing)
 │       │   ├── SimulatorView.js   # Página de práctica: partidas, iframe del simulador Unity y Atlas Radiológico
 │       │   ├── ProtectedRoute.js  # Guardián de rutas por autenticación y rol
@@ -182,14 +187,15 @@ ArcoC/
 │       │   └── useProctoring.js   # Hook para cámara, face-api y WebSockets
 │       └── lib/
 │           ├── courseConfig.js    # Configuración de los 30 pasos del curso (títulos, videos, íconos)
-│           └── api.js             # Llamadas al API con sesión, descargas y formato de fechas
+│           ├── api.js             # Llamadas al API con sesión, descargas y formato de fechas
+│           └── supportCases.js    # Categorías y estados de los reportes (curso y panel)
 │
 └── tests/
     ├── helpers/
     │   ├── loginHelper.js         # Utilidad de login y reset para tests
     │   ├── simulatorHelper.js     # Partidas del simulador y avance de pasos vía API
     │   └── adminHelper.js         # Sesión de admin en contexto propio, promociones y matrículas vía API
-    └── e2e/                       # 29 suites Playwright (ver sección 13)
+    └── e2e/                       # 30 suites Playwright (ver sección 13)
 ```
 
 En la raíz del monorepo, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) corre el lint del cliente y la suite E2E sobre SQLite y PostgreSQL (ver sección 13).
@@ -312,6 +318,9 @@ Historial de intentos del examen, una fila por intento:
 * `started_at` y `finished_at` (ISO 8601).
 
 `students.exam_in_progress` y `exam_question_ids` siguen siendo el intento abierto. Los intentos anteriores a la migración no tienen fila.
+
+#### 12. `support_cases` (migración 5)
+Casos de «Reportar un problema» (sección 10.13): `student_id`, `step_id` (paso de la malla, `exam` o vacío), `category` (`video` | `minigame` | `exam` | `account` | `other`), `description`, `context` (JSON con URL, navegador y tamaño de ventana), `status` (`open` | `resolved` | `rejected`), `created_at`, `resolved_at`, `resolved_by_admin_id` y `resolution` (la respuesta que recibe el estudiante).
 
 #### Columna agregada por la migración 4
 * `students.is_test` (0 por defecto): estudiante de prueba, excluido de estadísticas, actas, CSV, sellos y verificación de certificados (sección 10.12).
@@ -644,7 +653,7 @@ Toda modificación hecha desde el panel queda registrada con el administrador, l
 * **Estados reales:** `sent` (entregado al servidor SMTP), `simulated` (modo sin SMTP: no salió), `queued` y `failed`. La migración 2 marcó como `simulated` los registros anteriores, que decían `sent` aunque ningún correo salía del servidor.
 * **Sin secretos en la bitácora:** `body_content` guarda el HTML con los enlaces privados ocultos. El contenido real va cifrado (AES-256-GCM) en `payload_encrypted` y se borra al enviarse. La migración 2 ocultó también las contraseñas temporales que las inducciones anteriores habían guardado en texto plano.
 * **Transporte:** `MAIL_TRANSPORT=smtp` con `SMTP_HOST`, `SMTP_PORT` (465 = TLS directo; 587 = STARTTLS), `SMTP_USER`, `SMTP_PASS` y `MAIL_FROM`. Sirve para cualquier proveedor (Amazon SES, Brevo, Postmark, Microsoft 365, Google Workspace…). Sin `SMTP_HOST` el modo es `log` (simulado). En producción el arranque avisa si no hay SMTP, y `/api/health` informa `mail: smtp | log`.
-* **Plantillas ([`server/services/emailService.js`](server/services/emailService.js)):** bienvenida con enlace de activación (`induction_activation`), guía para cuentas ya activadas (`induction`), restablecimiento de contraseña (`password_reset`) y recordatorio de avance (`progress_reminder`). Los enlaces usan `APP_PUBLIC_URL`.
+* **Plantillas ([`server/services/emailService.js`](server/services/emailService.js)):** bienvenida con enlace de activación (`induction_activation`), guía para cuentas ya activadas (`induction`), restablecimiento de contraseña (`password_reset`), recordatorio de avance (`progress_reminder`) y respuesta a un reporte del estudiante (`case_answered`, sección 10.13). Los enlaces usan `APP_PUBLIC_URL`.
 
 ### 10.6 Evaluación del Estándar Institucional IES (6 Criterios Obligatorios)
 Al seleccionar a cualquier estudiante y pulsar **"🔍 Ver Estándar IES"**, la plataforma evalúa en servidor (`GET /api/admin/compliance/:studentId`) el cumplimiento riguroso de los **6 limitantes del estándar de acreditación**:
@@ -799,6 +808,32 @@ Al copiar el estado de otro estudiante:
 * No se copia el código del certificado. Si el origen aprobó, la cuenta de prueba queda aprobada, pero sin un código verificable.
 * Un intento del examen que estaba abierto se copia como abandonado.
 * El estudiante de origen no cambia.
+
+
+### 10.13 Reportes de Problemas («Reportar un problema») ([`server/services/supportCases.js`](server/services/supportCases.js))
+El estudiante avisa de un problema desde el paso donde le ocurre. El admin lo atiende desde una bandeja y su respuesta le llega por correo.
+
+**Estudiante:**
+* Cada tarjeta del curso tiene un enlace discreto **🛟 Reportar un problema**; también la práctica y la pantalla inicial del examen.
+* El reporte (`POST /api/support-cases`) lleva:
+  * la categoría (video, minijuego, examen, cuenta u otro), preseleccionada según el paso;
+  * una descripción de 10 a 2000 caracteres;
+  * contexto técnico: URL, navegador y tamaño de ventana. Solo se guardan esas claves.
+* **🛟 Mis reportes**, en la barra lateral del curso (`GET /api/support-cases/mine`), muestra el estado y la respuesta de cada uno.
+* Puede tener hasta 5 casos abiertos (`429` al pasar el límite).
+* No hace falta que la promoción esté abierta: también se reporta, por ejemplo, un problema con el certificado.
+* El admin no abre casos (`403`); para probar el flujo usa un estudiante de prueba.
+
+**Admin:**
+* **📨 Casos reportados** en el panel muestra cuántos hay abiertos (`GET /api/admin/support-cases?status=open|resolved|rejected|all`).
+* Cada caso trae el estudiante (con enlace a su ficha y la marca de prueba), el paso, la descripción y el contexto técnico.
+* Para cerrarlo (`POST /api/admin/support-cases/:id/resolve` con `{ status: 'resolved' | 'rejected', resolution }`) la respuesta es obligatoria:
+  * va a la bitácora sobre el estudiante (`case.resolve` o `case.reject`);
+  * se le envía por correo (plantilla `case_answered`);
+  * un caso cerrado no se vuelve a cerrar (`409`).
+* La ficha del estudiante lista sus reportes, y la línea de tiempo muestra cuándo los abrió y cuándo se cerraron.
+
+Los modales del estudiante se dibujan en `document.body` (portal). Dentro de una tarjeta con `transform` (`.card:hover`), un elemento `position: fixed` queda atado a la tarjeta y se mueve con ella.
 
 ---
 
@@ -1016,10 +1051,10 @@ Microsoft 365 y Google Workspace restringen el SMTP con usuario y contraseña (e
 
 ## 13. Suite de Pruebas Automatizadas (Playwright)
 
-El proyecto cuenta con un conjunto integral de **112 pruebas E2E automatizadas** organizadas en **29 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
+El proyecto cuenta con un conjunto integral de **115 pruebas E2E automatizadas** organizadas en **30 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
 
 ```bash
-# Ejecutar todas las 29 suites E2E (112 pruebas) sobre la base de desarrollo (SQLite)
+# Ejecutar todas las 30 suites E2E (115 pruebas) sobre la base de desarrollo (SQLite)
 npx playwright test
 
 # La misma suite sobre un PostgreSQL 16 desechable (sin Docker; detén antes los servidores de desarrollo)
@@ -1098,6 +1133,7 @@ Las reglas que dependen del tiempo real (visualización mínima de videos y dura
 | **27** | **`27-progress-tracking-and-student-detail.test.js`** | **Seguimiento del avance y ficha del estudiante:** reglas puras (fechas de ambos motores a ISO, mejor partida por nivel y luego por porcentaje, paso actual y cada alerta con sus excepciones: certificados, cuentas desactivadas y promociones que no están abiertas); `/api/admin/progress` con un estado conocido (avance 3/30, paso actual, mejor nivel y puntos por minijuego, alertas de minijuego difícil y de intentos agotados, «solo con alertas» sin cambiar los totales, paginación); `/api/admin/students/:id/detail` (30 pasos, partidas con su nivel, historial del examen, línea de tiempo ordenada, 404/400 y 403 para estudiantes); y en el panel, la pestaña de seguimiento y la ficha con sus partidas y su línea de tiempo. |
 | **28** | **`28-admin-course-preview.test.js`** | **Modo revisión del administrador:** por API, el admin marca un paso fuera de orden y recibe `{ preview: true }` sin que cambie su avance; juega un minijuego fuera de orden, la partida se registra como perfecta con 0 puntos; y el examen (`/start-exam`, `/questions`, `/submit-exam`, `/use-wildcard`) responde 403 `PREVIEW_MODE`. En el navegador: entra al curso desde el panel, ve el aviso de revisión, los pasos y el examen desbloqueados, juega una partida simulada sin botón de finalizar y ve el aviso del examen en lugar del botón para empezar. |
 | **29** | **`29-test-students.test.js`** | **Estudiantes de prueba:** se matriculan con `isTest` y se listan marcados, pero no cuentan en las métricas de la promoción, el resumen del seguimiento, el CSV ni el sello. Su certificado (con el estado copiado de un estudiante aprobado) no se valida en `/api/verify`, y el del estudiante real sí. Herramientas: con un estudiante real responden 409; llevar a `m2_v1` deja 6 pasos; copiar el estado de un estudiante con un video y una partida perfecta trae 2 pasos, la partida y sus puntos sin cambiar al origen; reiniciar vuelve a cero; todo queda en la bitácora con su motivo; se puede desmarcar la cuenta. En el panel: la marca y el indicador «+1 de prueba», y «Llevar a un paso» desde **⚙️ Gestionar**. |
+| **30** | **`30-support-cases.test.js`** | **Reportar un problema:** validaciones puras del reporte (categoría, paso, longitud, solo las claves conocidas del contexto) y de la respuesta. El estudiante reporta un minijuego; el admin no puede abrir casos ni el estudiante ver la bandeja (403); la bandeja trae el caso con su contexto; cerrarlo exige respuesta, un caso cerrado no se cierra de nuevo (409) y uno inexistente da 404; el estudiante ve la respuesta; quedan la bitácora (`case.resolve`), el correo `case_answered`, los reportes de la ficha y su línea de tiempo; con 5 casos abiertos el siguiente da 429. En el navegador: el estudiante reporta desde la tarjeta de un video (categoría preseleccionada) y lo ve en «Mis reportes»; el admin lo encuentra en la bandeja, lo resuelve y pasa a «Resueltos». |
 
 ---
 

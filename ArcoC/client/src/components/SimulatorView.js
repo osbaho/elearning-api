@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
+import ReportProblemButton from './ReportProblemButton';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
@@ -527,6 +528,12 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
                     ? 'Termina al menos una partida en el simulador para poder finalizar.'
                     : 'Podrás finalizar esta práctica cuando su minijuego esté disponible.'}
               </p>
+            </div>
+          )}
+
+          {!isPreview && (
+            <div className="mt-16 text-center">
+              <ReportProblemButton stepId={moduleId} category="minigame" />
             </div>
           )}
 

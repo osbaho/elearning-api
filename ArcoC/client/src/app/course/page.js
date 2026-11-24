@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import Link from 'next/link';
 import ModuleCard from '../../components/ModuleCard';
+import MyReportsButton from '../../components/MyReportsButton';
 import { useEffect, useRef, useState } from 'react';
 import { driver } from 'driver.js';
 import 'driver.js/dist/driver.css';
@@ -298,6 +299,7 @@ export default function Course() {
               >
                 📋 Guía de Bolsillo (PDF)
               </a>
+              {!isPreview && <MyReportsButton className="sidebar-nav-btn mt-8" />}
             </div>
           </div>
         </aside>
@@ -350,6 +352,7 @@ export default function Course() {
                         id={`step-${item.key}`}
                         isCurrent={!isPreview && item.key === nextStepKey}
                         preview={isPreview}
+                        showReport={!isPreview}
                         statusOverride={isPreview ? { text: '👁️ Revisión', className: 'status-info' } : undefined}
                         type={item.type}
                         title={item.title}
@@ -400,6 +403,7 @@ export default function Course() {
                     ? { text: '👁️ Revisión', className: 'status-info' }
                     : examFailed ? { text: `❌ No aprobado (${user.examScore}%)`, className: 'status-danger' } : undefined}
                   actionDisabled={noAttemptsLeft}
+                  showReport={!isPreview}
                   actionDisabledText="Sin intentos disponibles · Contacta al administrador"
                 />
               </div>

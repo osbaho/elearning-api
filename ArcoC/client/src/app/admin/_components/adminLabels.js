@@ -38,6 +38,8 @@ export const ACTION_LABELS = {
   'test.reset': 'Reinició al estudiante de prueba',
   'test.jump': 'Llevó al estudiante de prueba a un paso',
   'test.copy_from': 'Copió a la cuenta de prueba el estado de otro estudiante',
+  'case.resolve': 'Resolvió un reporte del estudiante',
+  'case.reject': 'Cerró sin cambios un reporte del estudiante',
 };
 
 export const EMAIL_STATUS = {
@@ -107,6 +109,7 @@ export function describeDetails(details) {
     return `${details.created.length} creados, ${(details.skipped || []).length} omitidos`;
   }
   if (details.purpose) return details.purpose === 'activation' ? 'Activación de cuenta' : 'Restablecer contraseña';
+  if (details.caseId) return `Reporte #${details.caseId}${details.stepId ? ` (${details.stepId})` : ''}`;
   if (details.stepId) return `Paso ${details.stepId} (${details.completedSteps} completados)`;
   if (details.sourceEmail) return `Desde ${details.sourceEmail}: ${details.steps} pasos, ${details.attempts} partidas`;
   return '';

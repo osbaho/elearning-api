@@ -297,4 +297,30 @@ export const MIGRATIONS = [
       await db.addColumnIfMissing('students', 'is_test', 'INTEGER DEFAULT 0');
     },
   },
+  {
+    version: 5,
+    name: 'casos_reportados',
+    // Fase 4: «Reportar un problema». El estudiante abre un caso desde cualquier paso; el admin
+    // lo resuelve o lo rechaza con una respuesta, queda en la bitácora y se le avisa por correo.
+    async up(db) {
+      const { id } = db.types;
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS support_cases (
+          id ${id},
+          student_id INTEGER NOT NULL,
+          step_id TEXT,
+          category TEXT NOT NULL,
+          description TEXT NOT NULL,
+          context TEXT,
+          status TEXT NOT NULL DEFAULT 'open',
+          created_at TEXT NOT NULL,
+          resolved_at TEXT,
+          resolved_by_admin_id INTEGER,
+          resolution TEXT
+        )
+      `);
+      await db.run('CREATE INDEX IF NOT EXISTS idx_support_cases_status ON support_cases(status)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_support_cases_student ON support_cases(student_id)');
+    },
+  },
 ];

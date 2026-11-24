@@ -201,3 +201,34 @@ export async function sendProgressReminderEmail({ studentId, name, email, cohort
   ].join('\n');
   return queueEmail({ studentId, to: email, subject, html, text, template: 'progress_reminder', adminId });
 }
+
+/**
+ * Respuesta del admin a un caso reportado (Fase 4). Cita el reporte para que el estudiante
+ * reconozca de cuál se trata.
+ */
+export async function sendCaseAnsweredEmail({ studentId, name, email, status, resolution, description, createdAt, adminId = null }) {
+  const loginUrl = appUrl('/login');
+  const resolved = status === 'resolved';
+  const excerpt = description.length > 160 ? `${description.slice(0, 157)}...` : description;
+  const reportedOn = createdAt ? formatDate(String(createdAt).slice(0, 10)) : '';
+  const subject = resolved
+    ? '✅ Respuesta a tu reporte en C-Arm Master'
+    : 'ℹ️ Revisamos tu reporte en C-Arm Master';
+  const html = layout({
+    title: 'Respuesta a tu reporte - C-Arm Master',
+    badge: resolved ? 'Reporte resuelto' : 'Reporte revisado',
+    bodyHtml: `
+      <p>Estimado(a) <strong>${escapeHtml(name)}</strong>,</p>
+      <p>El administrador del curso revisó el reporte que enviaste${reportedOn ? ` el ${reportedOn}` : ''}:</p>
+      <div class="box"><em>«${escapeHtml(excerpt)}»</em></div>
+      <p><strong>Respuesta:</strong> ${escapeHtml(resolution)}</p>
+      <a href="${loginUrl}" class="btn">Ir a mi curso ▶</a>`,
+  });
+  const text = [
+    `Estimado(a) ${name},`,
+    `El administrador revisó tu reporte${reportedOn ? ` del ${reportedOn}` : ''}: «${excerpt}»`,
+    `Respuesta: ${resolution}`,
+    `Ingresa en ${loginUrl}`,
+  ].join('\n');
+  return queueEmail({ studentId, to: email, subject, html, text, template: 'case_answered', adminId });
+}

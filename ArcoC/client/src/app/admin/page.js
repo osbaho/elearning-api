@@ -13,6 +13,7 @@ import ImportStudentsModal from './_components/ImportStudentsModal';
 import AdminActionsModal from './_components/AdminActionsModal';
 import LaunchReadinessCard from './_components/LaunchReadinessCard';
 import ProgressTrackingView from './_components/ProgressTrackingView';
+import SupportCasesButton from './_components/SupportCasesButton';
 import { EMAIL_STATUS, accountStatus } from './_components/adminLabels';
 
 const EMPTY_REG_FORM = {
@@ -476,6 +477,7 @@ export default function AdminPage() {
           >
             👁️ Ver el curso (revisión)
           </Link>
+          <SupportCasesButton addToast={addToast} />
           <button
             className="btn btn-secondary text-sm flex items-center gap-6"
             onClick={openEmailLogsModal}

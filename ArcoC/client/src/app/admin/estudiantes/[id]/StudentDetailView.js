@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Fragment, useEffect, useState } from 'react';
 import { apiRequest, formatDateTime, formatDay } from '../../../../lib/api';
 import { courseModules } from '../../../../lib/courseConfig';
+import { CASE_CATEGORIES, CASE_STATUS_INFO } from '../../../../lib/supportCases';
 import {
   ACCESS_STATE, ACTION_LABELS, ALERT_INFO, EMAIL_STATUS, EXAM_ATTEMPT_STATUS, INCIDENT_LABELS, TIER_INFO,
   accountStatus, alertText, currentStepLabel, describeDetails, stepLabel,
@@ -35,6 +36,8 @@ function timelineText(e) {
     case 'wildcard': return '🃏 Usó el comodín 50/50';
     case 'email': return `✉️ Correo «${e.subject}» (${EMAIL_STATUS[e.status]?.label || e.status})`;
     case 'admin_action': return `🛡️ ${e.adminName}: ${ACTION_LABELS[e.action] || e.action}${e.reason ? ` — ${e.reason}` : ''}`;
+    case 'case_opened': return `🛟 Reportó un problema (#${e.caseId}, ${CASE_CATEGORIES[e.category] || e.category}${e.stepId ? `, ${e.stepId}` : ''})`;
+    case 'case_closed': return `📨 El reporte #${e.caseId} quedó ${(CASE_STATUS_INFO[e.status]?.label || e.status).toLowerCase()}`;
     default: return e.kind;
   }
 }
@@ -108,7 +111,7 @@ export default function StudentDetailView({ studentId }) {
   }
   if (!detail) return <div className="container py-course text-center text-secondary">Cargando ficha...</div>;
 
-  const { student, steps, exam, incidents, emails, adminActions, timeline, timelineTruncated } = detail;
+  const { student, steps, exam, incidents, cases = [], emails, adminActions, timeline, timelineTruncated } = detail;
   const account = accountStatus({ isActive: student.account.isActive, activated: student.account.activated });
   const access = ACCESS_STATE[student.access.state];
   const toggleStep = (stepId) =>
@@ -283,6 +286,34 @@ export default function StudentDetailView({ studentId }) {
                 {incidents.map((i, index) => (
                   <tr key={`${i.at}-${index}`} data-incident={i.type}>
                     <td>{when(i.at)}</td><td>{INCIDENT_LABELS[i.type] || i.type}</td><td>{i.detail || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      {/* Reportes del estudiante («Reportar un problema») */}
+      <div className="detail-section">
+        <h2 className="title-sm text-cyan mb-12">Reportes del estudiante</h2>
+        <div className="card p-16 overflow-auto" id="detail-cases">
+          {cases.length === 0 ? (
+            <div className="text-xs text-muted">No ha reportado problemas.</div>
+          ) : (
+            <table className="admin-table text-xs">
+              <thead><tr><th scope="col">#</th><th scope="col">Fecha</th><th scope="col">Sobre</th><th scope="col">Descripción</th><th scope="col">Estado y respuesta</th></tr></thead>
+              <tbody>
+                {cases.map((c) => (
+                  <tr key={c.id} data-case-id={c.id} data-case-status={c.status}>
+                    <td>{c.id}</td>
+                    <td>{when(c.createdAt)}</td>
+                    <td>{CASE_CATEGORIES[c.category] || c.category}{c.stepId ? ` · ${c.stepId}` : ''}</td>
+                    <td style={{ whiteSpace: 'pre-wrap' }}>{c.description}</td>
+                    <td>
+                      <span className={CASE_STATUS_INFO[c.status]?.className}>{CASE_STATUS_INFO[c.status]?.label || c.status}</span>
+                      {c.resolution && <div className="mt-4">{c.resolution}</div>}
+                    </td>
                   </tr>
                 ))}
               </tbody>
