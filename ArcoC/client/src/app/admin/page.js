@@ -462,7 +462,15 @@ export default function AdminPage() {
           </p>
         </div>
         <div className="flex gap-12 items-center flex-wrap">
-          <button 
+          <Link
+            href="/course"
+            className="btn btn-secondary text-sm flex items-center gap-6"
+            id="btn-open-course-preview"
+            title="Recorre el curso como lo ve un estudiante, sin orden y sin registrar avance"
+          >
+            👁️ Ver el curso (revisión)
+          </Link>
+          <button
             className="btn btn-secondary text-sm flex items-center gap-6"
             onClick={openEmailLogsModal}
             id="btn-open-email-logs"

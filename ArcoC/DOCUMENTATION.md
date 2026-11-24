@@ -130,6 +130,7 @@ ArcoC/
 │   │   ├── adminActions.js        # Bitácora de acciones del administrador (admin_actions)
 │   │   ├── access.js              # Ventana de acceso según las fechas de la promoción
 │   │   ├── examQuestions.js       # Preguntas de cada intento sin repetir las ya vistas
+│   │   ├── preview.js             # Modo revisión del administrador (recorre el curso sin registrar nada)
 │   │   ├── launchReadiness.js     # Qué falta para el lanzamiento: videos, minijuegos y banco de preguntas
 │   │   └── progressTracking.js    # Avance, mejor nivel por minijuego, última actividad, alertas y ficha
 │   └── scripts/
@@ -186,7 +187,7 @@ ArcoC/
     │   ├── loginHelper.js         # Utilidad de login y reset para tests
     │   ├── simulatorHelper.js     # Partidas del simulador y avance de pasos vía API
     │   └── adminHelper.js         # Sesión de admin en contexto propio, promociones y matrículas vía API
-    └── e2e/                       # 27 suites Playwright (ver sección 13)
+    └── e2e/                       # 28 suites Playwright (ver sección 13)
 ```
 
 En la raíz del monorepo, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) corre el lint del cliente y la suite E2E sobre SQLite y PostgreSQL (ver sección 13).
@@ -358,7 +359,7 @@ El programa académico consta de **5 módulos temáticos** y **30 pasos obligato
 **Panel del estudiante (`/course`):** al entrar se abre el módulo del paso pendiente (el primero sin completar o, con la malla completa, el examen), con su tarjeta resaltada, y el botón **«Continuar donde quedé»** lleva hasta él. La tarjeta del examen distingue tres estados: *aprobado* (✅ con la nota), *no aprobado* (❌ con la nota y «Reintentar Examen» con los intentos restantes) y *sin intentos* (botón deshabilitado con aviso de contactar al administrador). Antes, una nota reprobatoria se mostraba como «✅ Aprobado (60%)» y deshabilitaba el examen.
 
 ### Enforce de Secuencialidad Backend
-El endpoint `POST /api/progress/:moduleId` valida en el servidor la lista ordenada `COURSE_STEPS`. Para marcar cualquier paso `n`, el paso `n-1` debe existir previamente en estado `'completed'` en `course_progress`; repetir un paso ya completado responde éxito sin cambios. **Todo minijuego** exige además **al menos una partida terminada** (`simulator_attempts` con `status = 'completed'`). Antes, los minijuegos sin escena en el simulador se podían finalizar sin jugar. Uno pendiente no admite partidas en producción, así que ahí el estudiante no puede finalizarlo ni avanzar más allá (sección 6). El módulo `'exam'` está protegido contra marcado manual: solo el endpoint `/api/submit-exam` puede otorgarlo tras calificar formalmente con la nota mínima (90%). Los conteos de avance (bloqueo del examen, estándar IES, CSV, recordatorios) solo cuentan pasos de la malla vigente.
+El endpoint `POST /api/progress/:moduleId` valida en el servidor la lista ordenada `COURSE_STEPS`. Para marcar cualquier paso `n`, el paso `n-1` debe existir previamente en estado `'completed'` en `course_progress`; repetir un paso ya completado responde éxito sin cambios. **Todo minijuego** exige además **al menos una partida terminada** (`simulator_attempts` con `status = 'completed'`). Antes, los minijuegos sin escena en el simulador se podían finalizar sin jugar. Uno pendiente no admite partidas en producción, así que ahí el estudiante no puede finalizarlo ni avanzar más allá (sección 6). El administrador es la excepción: en modo revisión abre cualquier paso y nada se registra (sección 10.11). El módulo `'exam'` está protegido contra marcado manual: solo el endpoint `/api/submit-exam` puede otorgarlo tras calificar formalmente con la nota mínima (90%). Los conteos de avance (bloqueo del examen, estándar IES, CSV, recordatorios) solo cuentan pasos de la malla vigente.
 
 ### Control de Visualización en Videos ([`VideoPlayer.js`](file:///c:/Oscar/ArcoC/client/src/components/VideoPlayer.js))
 * **Detección de Adelanto No Autorizado (Anti-Scrubbing):** Si el estudiante intenta saltar a una marca de tiempo superior a la observada de forma continua (+2 segundos de tolerancia), el reproductor revierte inmediatamente el cursor al tiempo máximo visto legítimamente y muestra una advertencia visual.
@@ -739,6 +740,30 @@ Los umbrales están en `ALERT_RULES` (`progressTracking.js`).
 * **Incidencias de supervisión** (`exam_logs`), **correos** (`email_logs`) y **acciones del admin** sobre el estudiante.
 * **Línea de tiempo:** todo lo anterior junto, de lo más reciente a lo más antiguo (hasta 300 eventos).
 
+
+### 10.11 Modo Revisión del Administrador ([`server/services/preview.js`](server/services/preview.js))
+El admin puede recorrer el curso como lo ve un estudiante, para reproducir lo que le reportan. Se entra con **👁️ Ver el curso (revisión)** en el panel o abriendo `/course` con la sesión de admin. Antes, el admin era redirigido al panel.
+
+**En el curso:**
+* Todos los pasos y el examen están desbloqueados y marcados «👁️ Revisión».
+* Los videos se pueden adelantar y no registran inicio ni visto.
+* No hay recorrido guiado ni barra de avance; en su lugar aparece un aviso con **← Volver al panel**.
+* El encabezado cambia a **⚙️ Panel admin**.
+* `ProtectedRoute` lo permite con `allowAdminPreview`, sin exigir el onboarding al admin.
+
+**En las prácticas:**
+* El admin juega cualquier minijuego, sin orden.
+* Las partidas quedan registradas con su nivel (útil para reproducir un error), pero no suman Puntos de Reserva.
+* No hay botón **Finalizar Práctica**.
+
+**En el examen:** la página muestra las reglas vigentes y explica que no se presenta en este modo. Para probarlo de punta a punta hay que usar un estudiante de prueba.
+
+**En la API**, cuando la petición es del admin:
+* `POST /api/progress/:id` y `/start` responden `{ preview: true }` sin escribir nada.
+* `POST /api/simulator/attempts` omite las verificaciones de secuencia y de minijuego finalizado. En producción, un minijuego que aún no está en el build sigue sin admitir partidas.
+* El resultado de la partida se guarda con 0 puntos, sin entrada en `exam_logs`, y responde `preview: true`.
+* `/api/start-exam`, `/api/questions`, `/api/submit-exam` y `/api/use-wildcard` responden `403` con `code: 'PREVIEW_MODE'`. Antes nada impedía que el admin presentara el examen.
+
 ---
 
 ## 11. Seguridad, Criptografía y Anti-Fraude
@@ -955,10 +980,10 @@ Microsoft 365 y Google Workspace restringen el SMTP con usuario y contraseña (e
 
 ## 13. Suite de Pruebas Automatizadas (Playwright)
 
-El proyecto cuenta con un conjunto integral de **107 pruebas E2E automatizadas** organizadas en **27 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
+El proyecto cuenta con un conjunto integral de **109 pruebas E2E automatizadas** organizadas en **28 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
 
 ```bash
-# Ejecutar todas las 27 suites E2E (107 pruebas) sobre la base de desarrollo (SQLite)
+# Ejecutar todas las 28 suites E2E (109 pruebas) sobre la base de desarrollo (SQLite)
 npx playwright test
 
 # La misma suite sobre un PostgreSQL 16 desechable (sin Docker; detén antes los servidores de desarrollo)
@@ -1014,7 +1039,7 @@ Las reglas que dependen del tiempo real (visualización mínima de videos y dura
 | **04** | **`04-exam-flow.test.js`** | Flujo completo de evaluación: inicio, carga de banco de preguntas, respuesta secuencial y calificación. |
 | **05** | **`05-proctoring-block.test.js`** | Suspensión automática del examen ante eventos simulados de violación biométrica. |
 | **06** | **`06-focus-loss.test.js`** | Despliegue del overlay protector y registro de telemetría forense cuando la ventana pierde el foco. |
-| **07** | **`07-admin-dashboard.test.js`** | Aislamiento de rutas administrativas, bloqueo de estudiantes en `/admin`, renderizado de registros IES y descarga de constancias. |
+| **07** | **`07-admin-dashboard.test.js`** | Rutas administrativas: bloqueo de estudiantes en `/admin`, el admin entra a `/course` solo en modo revisión, renderizado de registros IES y descarga de constancias. |
 | **08** | **`08-security-and-verify.test.js`** | Inmutabilidad del costo de comodines en servidor, secuencialidad estricta de pasos de curso y validación pública en `/api/verify/:code`. |
 | **09** | **`09-auth-and-payload-chaos.test.js`** | **Caos de Autenticación y Payloads:** Inyecciones SQL (`' OR 1=1 --`), tipos malformados (objetos/arrays en login), tiempo constante anti-timing para correos inexistentes, tokens JWT truncados/falsificados/basura en cookies y headers, logout con expiración de cookies, validación estricta de descriptores biométricos (longitud != 128, NaN, IDs inexistentes) y verificación de cifrado AES-256-GCM en reposo. |
 | **10** | **`10-simulator-and-points-chaos.test.js`** | **Integridad Financiera y Simulador:** Rechazo de puntos negativos, nulos, NaN o flotantes (`-50`, `0`, `999999`); bloqueo de path traversal en `source` (`../../etc/passwd`); bloqueo de doble otorgamiento por re-envío en módulos ya aprobados; tope global inviolable de 500 Puntos de Reserva; y descarte de mensajes `postMessage` con el formato real de Unity que no provienen del iframe del simulador (origen falso o la propia ventana), sin llamadas a la API. |
@@ -1035,6 +1060,7 @@ Las reglas que dependen del tiempo real (visualización mínima de videos y dura
 | **25** | **`25-smtp-delivery.test.js`** | **Entrega por SMTP real:** un servidor SMTP local (`smtp-server`) recibe lo que envía el transporte de la API con la configuración `SMTP_*`; comprueba la elección del modo (`smtp`/`log`) y del TLS según el puerto, la autenticación, remitente y destinatario, el asunto y que el enlace de activación llegue completo en HTML y texto, sin contraseñas; y que unas credenciales SMTP incorrectas hagan fallar el envío. |
 | **26** | **`26-course-structure-and-exam-rotation.test.js`** | **Malla de lanzamiento y examen sin preguntas repetidas:** reglas puras (selección de preguntas con bancos de 50, 25 y 5: sin repetir mientras queden sin ver y completando con las del intento más antiguo; un minijuego pendiente no admite partidas en producción y sí fuera de ella; la lista de contenido pendiente coincide con la configuración); todo minijuego exige una partida terminada, también los pendientes; 3 intentos del examen sin preguntas repetidas (solo las inevitables si el banco es menor), el 4.º rechazado y el historial `exam.history` con sus notas; reiniciar un intento abierto conserva sus preguntas y deja el anterior como `abandoned`; `/api/admin/launch-readiness` (solo admin) y la tarjeta del panel; y la práctica de un minijuego pendiente, «en desarrollo», que solo se finaliza tras una partida simulada. |
 | **27** | **`27-progress-tracking-and-student-detail.test.js`** | **Seguimiento del avance y ficha del estudiante:** reglas puras (fechas de ambos motores a ISO, mejor partida por nivel y luego por porcentaje, paso actual y cada alerta con sus excepciones: certificados, cuentas desactivadas y promociones que no están abiertas); `/api/admin/progress` con un estado conocido (avance 3/30, paso actual, mejor nivel y puntos por minijuego, alertas de minijuego difícil y de intentos agotados, «solo con alertas» sin cambiar los totales, paginación); `/api/admin/students/:id/detail` (30 pasos, partidas con su nivel, historial del examen, línea de tiempo ordenada, 404/400 y 403 para estudiantes); y en el panel, la pestaña de seguimiento y la ficha con sus partidas y su línea de tiempo. |
+| **28** | **`28-admin-course-preview.test.js`** | **Modo revisión del administrador:** por API, el admin marca un paso fuera de orden y recibe `{ preview: true }` sin que cambie su avance; juega un minijuego fuera de orden, la partida se registra como perfecta con 0 puntos; y el examen (`/start-exam`, `/questions`, `/submit-exam`, `/use-wildcard`) responde 403 `PREVIEW_MODE`. En el navegador: entra al curso desde el panel, ve el aviso de revisión, los pasos y el examen desbloqueados, juega una partida simulada sin botón de finalizar y ve el aviso del examen en lugar del botón para empezar. |
 
 ---
 

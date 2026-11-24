@@ -131,6 +131,8 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
   const canSimulateInDev = IS_DEV && stepInfo?.canSimulate === true;
   // Todo minijuego exige al menos una partida terminada para finalizarse
   const canFinish = completedAttempts > 0;
+  // Modo revisión del admin: juega cualquier minijuego; nada suma puntos ni avance
+  const isPreview = user?.role === 'admin';
 
   const modKey = moduleId?.slice(0, 2) || 'm1';
   const guideData = MODULE_GUIDE_ASSETS[modKey];
@@ -454,6 +456,13 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
         )}
       </div>
 
+      {isPreview && (
+        <div className="card p-16 mb-16 access-banner" id="practice-preview-banner" role="status">
+          👁️ <strong>Modo revisión del administrador:</strong> las partidas quedan registradas con su nivel para
+          reproducir lo que reporta un estudiante, pero no suman Puntos de Reserva ni avance y la práctica no se finaliza.
+        </div>
+      )}
+
       <div className="simulator-grid">
         {/* ── Simulator area ─────────────────────────────────────────── */}
         <div>
@@ -469,6 +478,7 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
                     {lastResult.pointsAwarded > 0
                       ? <>Ganaste <strong className="text-amber">+{lastResult.pointsAwarded} Puntos de Reserva ⚡</strong>.</>
                       : 'Esta partida no sumó Puntos de Reserva.'}
+                    {lastResult.preview && ' En modo revisión las partidas del administrador no suman puntos ni avance.'}
                     {lastResult.stepCapReached && (
                       <> Ya alcanzaste el máximo de {lastResult.stepPointsMax} puntos de este minijuego: puedes seguir practicando, pero las partidas ya no suman.</>
                     )}
@@ -505,7 +515,7 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
             </>
           )}
 
-          {!isCompleted && stepInfo !== null && (
+          {!isCompleted && !isPreview && stepInfo !== null && (
             <div className="mt-24 text-center">
               <button className="btn btn-danger" onClick={requestFinish} disabled={!canFinish}>
                 🏁 Finalizar Práctica

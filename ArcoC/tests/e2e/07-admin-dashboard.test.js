@@ -21,17 +21,15 @@ test.describe('Admin Role & IES Audit Dashboard', () => {
     await expect(page.locator('#stat-certified-students')).toBeVisible();
   });
 
-  test('Admin role is isolated from course modules: redirect back to /admin when accessing /course', async ({ page }) => {
+  test('Admin opens the course only in review mode (Fase 3): no progress is recorded', async ({ page }) => {
     // Iniciar sesión como Administrador
     await performLogin(page, 'admin@admin.com', ADMIN_PASSWORD, false);
     await expect(page).toHaveURL(/\/admin/);
 
-    // Intentar navegar manualmente a la ruta de estudiantes /course
+    // Hasta la Fase 3 se le redirigía al panel; ahora entra en modo revisión (ver suite 28)
     await page.goto('/course');
-
-    // ProtectedRoute debe redirigir al admin automáticamente de vuelta a /admin
-    await page.waitForURL(/\/admin/);
-    await expect(page).toHaveURL(/\/admin/);
+    await expect(page.locator('#admin-preview-banner')).toBeVisible({ timeout: 15000 });
+    await expect(page).toHaveURL(/\/course/);
   });
 
   test('Admin dashboard displays student audit records with identification and IES institution', async ({ page }) => {

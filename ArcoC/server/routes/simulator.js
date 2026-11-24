@@ -5,6 +5,7 @@ import { authenticateToken } from '../middleware/auth.js';
 import { requireOpenAccess } from '../services/access.js';
 import { isPracticeStep, previousStepOf } from '../config/curriculum.js';
 import { getSimulatorEntry, attemptBlockReason } from '../config/simulatorCatalog.js';
+import { isPreviewUser } from '../services/preview.js';
 import {
   classifyPhaseResult, clampToReserveCap, clampToStepCap, POINTS_BY_TIER, MAX_POINTS_PER_PRACTICE_STEP,
 } from '../config/reservePoints.js';
@@ -95,6 +96,8 @@ router.get('/steps/:stepId', authenticateToken, async (req, res) => {
       available: entry.ready,
       inDevelopment: !entry.ready,
       canSimulate: attemptBlockReason(stepId) === null,
+      // Modo revisión del admin: las partidas no suman puntos ni avance
+      ...(isPreviewUser(req) ? { preview: true } : {}),
       scene: entry.scene,
       phase: entry.phase,
       title: entry.title,
@@ -119,13 +122,15 @@ router.post('/attempts', authenticateToken, requireOpenAccess, async (req, res) 
       return res.status(entry ? 409 : 404).json({ error: blockReason });
     }
     const studentId = req.user.id;
+    const preview = isPreviewUser(req);
 
-    if (await isStepCompleted(studentId, stepId)) {
+    // Modo revisión: el admin juega cualquier minijuego sin seguir el orden
+    if (!preview && await isStepCompleted(studentId, stepId)) {
       return res.status(409).json({ error: 'Este minijuego ya fue finalizado. No se pueden iniciar más partidas.' });
     }
 
     const previous = previousStepOf(stepId);
-    if (previous && !(await isStepCompleted(studentId, previous))) {
+    if (!preview && previous && !(await isStepCompleted(studentId, previous))) {
       return res.status(403).json({
         error: `Secuencia requerida: Debes completar el paso previo (${previous}) antes de jugar ${stepId}.`,
       });
@@ -138,7 +143,7 @@ router.post('/attempts', authenticateToken, requireOpenAccess, async (req, res) 
       [attemptId, studentId, stepId, entry.scene, entry.phase, new Date().toISOString()]
     );
 
-    res.status(201).json({ attemptId, stepId, scene: entry.scene, phase: entry.phase });
+    res.status(201).json({ attemptId, stepId, scene: entry.scene, phase: entry.phase, ...(preview ? { preview: true } : {}) });
   } catch (err) {
     console.error('Simulator attempt error:', err);
     res.status(500).json({ error: 'Error del servidor' });
@@ -157,6 +162,8 @@ router.post('/attempts/:attemptId/result', authenticateToken, requireOpenAccess,
   }
   const result = parsed.value;
   const studentId = req.user.id;
+  // Modo revisión: la partida del admin se registra con su nivel, pero no suma puntos ni avance
+  const preview = isPreviewUser(req);
   const lockClause = getPgPool() ? ' FOR UPDATE' : '';
 
   try {
@@ -184,7 +191,7 @@ router.post('/attempts/:attemptId/result', authenticateToken, requireOpenAccess,
       if (result.phase !== Number(attempt.phase)) {
         throw new HttpError(422, 'La fase reportada no corresponde a este intento.');
       }
-      if (await isStepCompleted(studentId, attempt.step_id, tx)) {
+      if (!preview && await isStepCompleted(studentId, attempt.step_id, tx)) {
         throw new HttpError(409, 'Este minijuego ya fue finalizado. El resultado no suma puntos.');
       }
       const elapsedSeconds = (Date.now() - Date.parse(attempt.started_at)) / 1000;
@@ -209,8 +216,10 @@ router.post('/attempts/:attemptId/result', authenticateToken, requireOpenAccess,
       );
       const earnedInStep = Number(earned?.earned || 0);
       const tierPoints = POINTS_BY_TIER[tier];
-      const pointsAwarded = clampToReserveCap(clampToStepCap(tierPoints, earnedInStep), student.reserve_points);
-      const stepCapReached = tierPoints > 0 && earnedInStep + tierPoints > MAX_POINTS_PER_PRACTICE_STEP;
+      const pointsAwarded = preview
+        ? 0
+        : clampToReserveCap(clampToStepCap(tierPoints, earnedInStep), student.reserve_points);
+      const stepCapReached = !preview && tierPoints > 0 && earnedInStep + tierPoints > MAX_POINTS_PER_PRACTICE_STEP;
 
       if (pointsAwarded > 0) {
         await tx.run('UPDATE students SET reserve_points = reserve_points + ? WHERE id = ?', [pointsAwarded, studentId]);
@@ -225,15 +234,17 @@ router.post('/attempts/:attemptId/result', authenticateToken, requireOpenAccess,
           result.errorCount, result.doseMsv, result.timeSeconds, tier, pointsAwarded, attemptId,
         ]
       );
-      await tx.run(
-        'INSERT INTO exam_logs (student_id, event_type, detail) VALUES (?, ?, ?)',
-        [
-          studentId,
-          'SIM_RESULT',
-          `${attempt.step_id} fase ${attempt.phase}: ${tier} +${pointsAwarded} pts ` +
-            `(score ${result.score}/${result.maxScore}, errores ${result.errorCount}, ${result.timeSeconds.toFixed(1)} s)`,
-        ]
-      );
+      if (!preview) {
+        await tx.run(
+          'INSERT INTO exam_logs (student_id, event_type, detail) VALUES (?, ?, ?)',
+          [
+            studentId,
+            'SIM_RESULT',
+            `${attempt.step_id} fase ${attempt.phase}: ${tier} +${pointsAwarded} pts ` +
+              `(score ${result.score}/${result.maxScore}, errores ${result.errorCount}, ${result.timeSeconds.toFixed(1)} s)`,
+          ]
+        );
+      }
 
       const updated = await tx.get('SELECT reserve_points FROM students WHERE id = ?', [studentId]);
       return {
@@ -247,6 +258,7 @@ router.post('/attempts/:attemptId/result', authenticateToken, requireOpenAccess,
         stepPointsMax: MAX_POINTS_PER_PRACTICE_STEP,
         stepCapReached,
         duplicate: false,
+        ...(preview ? { preview: true } : {}),
       };
     });
 

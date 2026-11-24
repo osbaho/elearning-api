@@ -350,6 +350,30 @@ export default function ExamPage() {
 
   if (loading || !user) return null;
 
+  // Modo revisión: el admin ve la página, pero no abre intentos (la API los rechaza)
+  if (user.role === 'admin') {
+    return (
+      <div className="container py-course">
+        <h1 className="title-lg">Evaluación Final</h1>
+        <div className="card p-20 access-banner" id="exam-preview-notice" role="status">
+          <strong>👁️ Modo revisión del administrador</strong>
+          <p className="text-secondary text-sm mt-8">
+            El examen no se presenta en este modo: abrir un intento consumiría un intento real y el proctoring
+            necesita el registro biométrico de un estudiante. Para probarlo de punta a punta usa un estudiante de prueba.
+          </p>
+          <p className="text-secondary text-sm m-0">
+            Reglas vigentes: {examRules?.questionCount ?? 10} preguntas por intento, {passScore}% para aprobar,
+            {' '}{maxAttempts} intentos y comodín 50/50 por {wildcardCost} Puntos de Reserva.
+          </p>
+          <div className="flex gap-8 mt-16 flex-wrap">
+            <button className="btn btn-secondary" onClick={() => router.push('/course')}>← Volver al curso</button>
+            <button className="btn btn-secondary" onClick={() => router.push('/admin')}>⚙️ Panel admin</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="container py-course">
       <div className="exam-layout">

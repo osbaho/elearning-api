@@ -2,6 +2,7 @@ import express from 'express';
 import { run, get } from '../config/db.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { requireOpenAccess } from '../services/access.js';
+import { isPreviewUser } from '../services/preview.js';
 import { isCourseStep, isPracticeStep, isVideoStep, minWatchSecondsFor, previousStepOf } from '../config/curriculum.js';
 
 const router = express.Router();
@@ -32,6 +33,8 @@ router.post('/:moduleId/start', authenticateToken, requireOpenAccess, async (req
     if (!isVideoStep(moduleId)) {
       return res.status(400).json({ error: 'Solo los videos del curso registran inicio de reproducción.' });
     }
+    // Modo revisión: el admin recorre el curso sin registrar nada
+    if (isPreviewUser(req)) return res.json({ stepId: moduleId, preview: true });
     const blocked = await sequenceBlockMessage(studentId, moduleId);
     if (blocked) return res.status(403).json({ error: blocked });
 
@@ -59,6 +62,9 @@ router.post('/:moduleId', authenticateToken, requireOpenAccess, async (req, res)
     if (!isCourseStep(moduleId)) {
       return res.status(400).json({ error: 'Módulo inválido o no permitido para marcado directo.' });
     }
+
+    // Modo revisión: el admin abre cualquier paso sin orden y no se registra como avance
+    if (isPreviewUser(req)) return res.json({ success: true, preview: true });
 
     // Repetir un paso ya completado no cambia nada
     if (await isStepCompleted(studentId, moduleId)) {

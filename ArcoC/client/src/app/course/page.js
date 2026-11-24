@@ -29,6 +29,8 @@ export default function Course() {
   const [selectedModuleId, setSelectedModuleId] = useState(null);
   const tourInitialized = useRef(false);
 
+  // Modo revisión: el admin recorre el curso sin orden; nada se registra como avance
+  const isPreview = user?.role === 'admin';
   const completedModules = user?.completedModules || [];
 
   const TOTAL_STEPS = ALL_STEPS.length;
@@ -45,7 +47,7 @@ export default function Course() {
   const examFailed = examAttempted && !examPassed;
   const noAttemptsLeft = !examPassed && attemptsLeft === 0;
   // Exam is locked if not all module steps are completed
-  const examLocked = completedSteps < TOTAL_STEPS;
+  const examLocked = !isPreview && completedSteps < TOTAL_STEPS;
 
   // Paso que le toca: el primero sin completar (la API obliga a seguir el orden) o el examen
   const nextStepKey = ALL_STEPS.find(k => !completedModules.includes(k)) ?? null;
@@ -129,8 +131,8 @@ export default function Course() {
   };
 
   useEffect(() => {
-    // Only run the tour if the user is fully loaded and hasn't seen it yet
-    if (user && !localStorage.getItem('tour_completed_arco') && !tourInitialized.current) {
+    // Only run the tour if the user is fully loaded and hasn't seen it yet (nunca en modo revisión)
+    if (user && user.role !== 'admin' && !localStorage.getItem('tour_completed_arco') && !tourInitialized.current) {
       tourInitialized.current = true;
       const driverObj = driver({
         showProgress: true,
@@ -211,6 +213,17 @@ export default function Course() {
             Completa los módulos teóricos y prácticos para habilitar el examen final.
           </p>
 
+          {isPreview ? (
+            <div className="card mx-auto mt-24 p-16 access-banner course-progress-container" id="admin-preview-banner" role="status">
+              <strong>👁️ Modo revisión del administrador</strong>
+              <p className="text-secondary text-sm m-0 mt-4">
+                Puedes abrir cualquier paso sin seguir el orden, adelantar los videos y jugar los minijuegos para
+                reproducir lo que reporta un estudiante. Nada se registra como avance ni suma Puntos de Reserva, y el
+                examen no se presenta en este modo.
+              </p>
+              <Link href="/admin" className="btn btn-secondary mt-12 d-inline-block">← Volver al panel</Link>
+            </div>
+          ) : (
           <div className="mx-auto mt-24 course-progress-container">
             <div className="flex-between mb-12">
               <span className="text-secondary text-sm">
@@ -244,6 +257,7 @@ export default function Course() {
               </button>
             )}
           </div>
+          )}
         </div>
       </section>
 
@@ -323,7 +337,7 @@ export default function Course() {
                     const isCompleted = completedModules.includes(item.key);
                     
                     let isLocked = false;
-                    if (globalIndex > 0) {
+                    if (globalIndex > 0 && !isPreview) {
                       const prevKey = ALL_STEPS[globalIndex - 1];
                       isLocked = !completedModules.includes(prevKey);
                     }
@@ -334,7 +348,9 @@ export default function Course() {
                       <ModuleCard
                         key={item.key}
                         id={`step-${item.key}`}
-                        isCurrent={item.key === nextStepKey}
+                        isCurrent={!isPreview && item.key === nextStepKey}
+                        preview={isPreview}
+                        statusOverride={isPreview ? { text: '👁️ Revisión', className: 'status-info' } : undefined}
                         type={item.type}
                         title={item.title}
                         description={item.description}
@@ -373,12 +389,16 @@ export default function Course() {
                   isLocked={examLocked}
                   isCurrent={nextTarget === 'exam'}
                   linkHref="/course/exam"
-                  linkText={examFailed
-                    ? `Reintentar Examen${attemptsLeft !== undefined ? ` (${attemptsLeft === 1 ? '1 intento restante' : `${attemptsLeft} intentos restantes`})` : ''}`
-                    : 'Presentar Examen'}
+                  linkText={isPreview
+                    ? 'Ver la página del examen'
+                    : examFailed
+                      ? `Reintentar Examen${attemptsLeft !== undefined ? ` (${attemptsLeft === 1 ? '1 intento restante' : `${attemptsLeft} intentos restantes`})` : ''}`
+                      : 'Presentar Examen'}
                   completedText="Examen Aprobado"
                   scoreInfo={examPassed ? user?.examScore : undefined}
-                  statusOverride={examFailed ? { text: `❌ No aprobado (${user.examScore}%)`, className: 'status-danger' } : undefined}
+                  statusOverride={isPreview
+                    ? { text: '👁️ Revisión', className: 'status-info' }
+                    : examFailed ? { text: `❌ No aprobado (${user.examScore}%)`, className: 'status-danger' } : undefined}
                   actionDisabled={noAttemptsLeft}
                   actionDisabledText="Sin intentos disponibles · Contacta al administrador"
                 />
