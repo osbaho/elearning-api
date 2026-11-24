@@ -36,7 +36,7 @@ router.get('/students', authenticateToken, checkAdmin, async (req, res) => {
       SELECT id, name, username, email, role, id_number, id_type, institution,
              is_onboarded, exam_score, exam_attempts, reserve_points,
              proctoring_incidents, focus_violations, cohort, start_date, created_at,
-             is_active, deactivated_at, deactivation_reason, password_set_at, last_login_at
+             is_active, deactivated_at, deactivation_reason, password_set_at, last_login_at, is_test
       FROM students
       WHERE 1=1
     `;
@@ -129,7 +129,9 @@ router.get('/students', authenticateToken, checkAdmin, async (req, res) => {
       activated: !!s.password_set_at,
       deactivatedAt: s.deactivated_at || null,
       deactivationReason: s.deactivation_reason || null,
-      lastLoginAt: s.last_login_at || null
+      lastLoginAt: s.last_login_at || null,
+      // Estudiante de prueba: se lista, pero no cuenta en estadísticas, actas, CSV ni sellos
+      isTest: !!Number(s.is_test)
     }));
 
     res.json({ success: true, students: mappedStudents, page, limit, total });
@@ -310,7 +312,7 @@ router.get('/export-audit', authenticateToken, checkAdmin, async (req, res) => {
              cp.certificate_code, cp.completed_at as certified_at
       FROM students s
       LEFT JOIN course_progress cp ON cp.student_id = s.id AND cp.module_id = 'exam' AND cp.status = 'completed'
-      WHERE s.role != 'admin'
+      WHERE s.role != 'admin' AND COALESCE(s.is_test, 0) = 0
     `;
     const params = [];
     if (cohortFilter) {
@@ -448,7 +450,7 @@ router.post('/cohorts/:cohort/close', authenticateToken, checkAdmin, async (req,
     const students = await all(`
       SELECT id, name, email, exam_score, is_onboarded 
       FROM students 
-      WHERE COALESCE(cohort, 'Promoción 1') = ? AND role != 'admin'
+      WHERE COALESCE(cohort, 'Promoción 1') = ? AND role != 'admin' AND COALESCE(is_test, 0) = 0
       ORDER BY id ASC
     `, [cohortName]);
 

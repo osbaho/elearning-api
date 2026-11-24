@@ -117,7 +117,8 @@ ArcoC/
 │   │   ├── simulator.js           # Partidas del simulador Unity y resultados por fase
 │   │   ├── admin.js               # Listado, auditoría IES, CSV, PDF, sellado, reenvío y recordatorios
 │   │   ├── adminManagement.js     # Promociones, matrícula (individual y CSV), edición, estado de cuentas, bitácora
-│   │   └── adminProgress.js       # Seguimiento del avance por promoción y ficha del estudiante
+│   │   ├── adminProgress.js       # Seguimiento del avance por promoción y ficha del estudiante
+│   │   └── adminTestStudents.js   # Herramientas para estudiantes de prueba (reiniciar, llevar a un paso, copiar)
 │   ├── utils/
 │   │   ├── certificate.js         # Generación de PDF (PDFKit) y validación pública
 │   │   ├── cohortActa.js          # Acta colectiva y libro de calificaciones por promoción (PDF)
@@ -132,7 +133,8 @@ ArcoC/
 │   │   ├── examQuestions.js       # Preguntas de cada intento sin repetir las ya vistas
 │   │   ├── preview.js             # Modo revisión del administrador (recorre el curso sin registrar nada)
 │   │   ├── launchReadiness.js     # Qué falta para el lanzamiento: videos, minijuegos y banco de preguntas
-│   │   └── progressTracking.js    # Avance, mejor nivel por minijuego, última actividad, alertas y ficha
+│   │   ├── progressTracking.js    # Avance, mejor nivel por minijuego, última actividad, alertas y ficha
+│   │   └── testStudents.js        # Estudiantes de prueba: exclusión de estadísticas y herramientas
 │   └── scripts/
 │       ├── seed.js                # Inicialización de cuenta de Administrador
 │       ├── seed_50_questions.js   # Banco oficial de 50 preguntas médicas (actualizado a 2026/ACHS)
@@ -187,7 +189,7 @@ ArcoC/
     │   ├── loginHelper.js         # Utilidad de login y reset para tests
     │   ├── simulatorHelper.js     # Partidas del simulador y avance de pasos vía API
     │   └── adminHelper.js         # Sesión de admin en contexto propio, promociones y matrículas vía API
-    └── e2e/                       # 28 suites Playwright (ver sección 13)
+    └── e2e/                       # 29 suites Playwright (ver sección 13)
 ```
 
 En la raíz del monorepo, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) corre el lint del cliente y la suite E2E sobre SQLite y PostgreSQL (ver sección 13).
@@ -310,6 +312,9 @@ Historial de intentos del examen, una fila por intento:
 * `started_at` y `finished_at` (ISO 8601).
 
 `students.exam_in_progress` y `exam_question_ids` siguen siendo el intento abierto. Los intentos anteriores a la migración no tienen fila.
+
+#### Columna agregada por la migración 4
+* `students.is_test` (0 por defecto): estudiante de prueba, excluido de estadísticas, actas, CSV, sellos y verificación de certificados (sección 10.12).
 
 #### Columnas agregadas por la migración 2
 * `students`: `is_active` (1 por defecto), `deactivated_at`, `deactivation_reason`, `token_version` (invalida sesiones), `password_set_at` (vacío = pendiente de activación; las cuentas existentes quedaron activadas), `last_login_at`.
@@ -579,6 +584,7 @@ GET /api/verify/CARM-XXXXXXXXXXXX
 ```
 * **Respuesta Exitosa (200 OK):** Retorna validez, nombre del estudiante, institución, fecha de emisión, puntaje y documento de identidad enmascarado por privacidad (`••• 1234`).
 * **Respuesta de Código Inválido (404 Not Found):** Informa que el código no corresponde a ningún certificado legítimo emitido por la plataforma.
+* **Cuentas de prueba:** el certificado de un estudiante de prueba lleva la marca «CERTIFICADO DE PRUEBA — SIN VALIDEZ» y su código responde `404`, igual que uno inexistente (sección 10.12).
 
 ---
 
@@ -763,6 +769,36 @@ El admin puede recorrer el curso como lo ve un estudiante, para reproducir lo qu
 * `POST /api/simulator/attempts` omite las verificaciones de secuencia y de minijuego finalizado. En producción, un minijuego que aún no está en el build sigue sin admitir partidas.
 * El resultado de la partida se guarda con 0 puntos, sin entrada en `exam_logs`, y responde `preview: true`.
 * `/api/start-exam`, `/api/questions`, `/api/submit-exam` y `/api/use-wildcard` responden `403` con `code: 'PREVIEW_MODE'`. Antes nada impedía que el admin presentara el examen.
+
+
+### 10.12 Estudiantes de Prueba ([`server/services/testStudents.js`](server/services/testStudents.js))
+Son cuentas para que el admin reproduzca lo que reporta un estudiante, por ejemplo para presentar el examen de punta a punta, cosa que el modo revisión no permite.
+
+**Cómo se crean:**
+* Al matricular, marcando **🧪 Estudiante de prueba** (`POST /api/admin/students` con `isTest: true`).
+* Marcando una cuenta existente en **⚙️ Gestionar** (`PATCH /api/admin/students/:id` con `isTest`). El cambio queda en la bitácora.
+* La cuenta se activa con su enlace, igual que cualquier otra. Se guarda en `students.is_test` (migración 4).
+
+**Qué no cuentan:**
+* Los indicadores del panel. La tabla los muestra con la marca **🧪 Prueba** y el total aclara «+N de prueba».
+* El resumen del seguimiento (`summary.testStudents` dice cuántos se dejaron fuera).
+* Las métricas de las promociones.
+* El acta colectiva, el CSV de auditoría y el sello de la promoción.
+
+**Certificados:** su certificado lleva la marca «CERTIFICADO DE PRUEBA — SIN VALIDEZ» y su código no se valida en `/api/verify/:code`.
+
+**Herramientas de prueba** (en **⚙️ Gestionar**, solo para estas cuentas). Con un estudiante real responden `409 NOT_A_TEST_STUDENT`. Cada uso queda en la bitácora con su motivo:
+
+| Herramienta | Endpoint | Efecto |
+| :--- | :--- | :--- |
+| ↺ Reiniciar | `POST /api/admin/students/:id/test-tools/reset` | Queda como recién matriculado: sin avance, partidas, videos, intentos del examen, registros de examen ni puntos |
+| ⤳ Llevar a un paso | `.../test-tools/jump` `{ stepId }` | Reinicia y marca como completados los pasos anteriores a `stepId`. Con `'exam'`, la malla completa. Los minijuegos quedan finalizados sin partidas |
+| ⎘ Copiar su estado | `.../test-tools/copy-from` `{ sourceStudentId \| sourceEmail }` | Reinicia y copia de otro estudiante sus pasos, partidas, videos empezados, intentos del examen, puntos y contadores de supervisión |
+
+Al copiar el estado de otro estudiante:
+* No se copia el código del certificado. Si el origen aprobó, la cuenta de prueba queda aprobada, pero sin un código verificable.
+* Un intento del examen que estaba abierto se copia como abandonado.
+* El estudiante de origen no cambia.
 
 ---
 
@@ -980,10 +1016,10 @@ Microsoft 365 y Google Workspace restringen el SMTP con usuario y contraseña (e
 
 ## 13. Suite de Pruebas Automatizadas (Playwright)
 
-El proyecto cuenta con un conjunto integral de **109 pruebas E2E automatizadas** organizadas en **28 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
+El proyecto cuenta con un conjunto integral de **112 pruebas E2E automatizadas** organizadas en **29 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
 
 ```bash
-# Ejecutar todas las 28 suites E2E (109 pruebas) sobre la base de desarrollo (SQLite)
+# Ejecutar todas las 29 suites E2E (112 pruebas) sobre la base de desarrollo (SQLite)
 npx playwright test
 
 # La misma suite sobre un PostgreSQL 16 desechable (sin Docker; detén antes los servidores de desarrollo)
@@ -1061,6 +1097,7 @@ Las reglas que dependen del tiempo real (visualización mínima de videos y dura
 | **26** | **`26-course-structure-and-exam-rotation.test.js`** | **Malla de lanzamiento y examen sin preguntas repetidas:** reglas puras (selección de preguntas con bancos de 50, 25 y 5: sin repetir mientras queden sin ver y completando con las del intento más antiguo; un minijuego pendiente no admite partidas en producción y sí fuera de ella; la lista de contenido pendiente coincide con la configuración); todo minijuego exige una partida terminada, también los pendientes; 3 intentos del examen sin preguntas repetidas (solo las inevitables si el banco es menor), el 4.º rechazado y el historial `exam.history` con sus notas; reiniciar un intento abierto conserva sus preguntas y deja el anterior como `abandoned`; `/api/admin/launch-readiness` (solo admin) y la tarjeta del panel; y la práctica de un minijuego pendiente, «en desarrollo», que solo se finaliza tras una partida simulada. |
 | **27** | **`27-progress-tracking-and-student-detail.test.js`** | **Seguimiento del avance y ficha del estudiante:** reglas puras (fechas de ambos motores a ISO, mejor partida por nivel y luego por porcentaje, paso actual y cada alerta con sus excepciones: certificados, cuentas desactivadas y promociones que no están abiertas); `/api/admin/progress` con un estado conocido (avance 3/30, paso actual, mejor nivel y puntos por minijuego, alertas de minijuego difícil y de intentos agotados, «solo con alertas» sin cambiar los totales, paginación); `/api/admin/students/:id/detail` (30 pasos, partidas con su nivel, historial del examen, línea de tiempo ordenada, 404/400 y 403 para estudiantes); y en el panel, la pestaña de seguimiento y la ficha con sus partidas y su línea de tiempo. |
 | **28** | **`28-admin-course-preview.test.js`** | **Modo revisión del administrador:** por API, el admin marca un paso fuera de orden y recibe `{ preview: true }` sin que cambie su avance; juega un minijuego fuera de orden, la partida se registra como perfecta con 0 puntos; y el examen (`/start-exam`, `/questions`, `/submit-exam`, `/use-wildcard`) responde 403 `PREVIEW_MODE`. En el navegador: entra al curso desde el panel, ve el aviso de revisión, los pasos y el examen desbloqueados, juega una partida simulada sin botón de finalizar y ve el aviso del examen en lugar del botón para empezar. |
+| **29** | **`29-test-students.test.js`** | **Estudiantes de prueba:** se matriculan con `isTest` y se listan marcados, pero no cuentan en las métricas de la promoción, el resumen del seguimiento, el CSV ni el sello. Su certificado (con el estado copiado de un estudiante aprobado) no se valida en `/api/verify`, y el del estudiante real sí. Herramientas: con un estudiante real responden 409; llevar a `m2_v1` deja 6 pasos; copiar el estado de un estudiante con un video y una partida perfecta trae 2 pasos, la partida y sus puntos sin cambiar al origen; reiniciar vuelve a cero; todo queda en la bitácora con su motivo; se puede desmarcar la cuenta. En el panel: la marca y el indicador «+1 de prueba», y «Llevar a un paso» desde **⚙️ Gestionar**. |
 
 ---
 
@@ -1231,6 +1268,7 @@ Regla general: **cada rama tiene una sola función y desaparece cuando la cumple
 | `v0.2.0` | Fase 0: paridad PostgreSQL, migraciones, CI y arreglos del estudiante (con los PR #3, #4 y #6) |
 | `v0.3.0` | Fase 1: promociones, matrícula por enlace, gestión de cuentas, correo y bitácora. Incluye la migración a `@vladmandic/face-api` (PR #5) y la reparación de `main` tras ese merge |
 | `v0.4.0` | Fase 2: malla de 30 pasos, todo minijuego con partida obligatoria, examen sin preguntas repetidas, preparación del lanzamiento, seguimiento del avance por promoción y ficha del estudiante |
+| `v0.5.0` | Fase 3: modo revisión del administrador en el curso y estudiantes de prueba (fuera de estadísticas, actas, CSV, sellos y verificación; reiniciar, llevar a un paso y copiar el estado). Incluye la corrección de las clases CSS que faltaban |
 
 ### 16.4 Auditoría rápida
 * `git branch -a` y `git worktree list`: fuera de una tarea en curso solo debe aparecer `main`.
@@ -1243,4 +1281,4 @@ La aplica el dueño del repositorio en *Settings*:
 
 ---
 
-*C-Arm Master MVP — v0.4.0 (Fase 2; numeración de versiones en la sección 16.3). Documentación consolidada y actualizada al 24 de noviembre de 2026.*
+*C-Arm Master MVP — v0.5.0 (Fase 3; numeración de versiones en la sección 16.3). Documentación consolidada y actualizada al 24 de noviembre de 2026.*

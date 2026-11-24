@@ -24,7 +24,9 @@ const EMPTY_REG_FORM = {
   cohort: 'Promoción 1',
   customCohort: '',
   // Vacía = acceso según las fechas de la promoción
-  start_date: ''
+  start_date: '',
+  // Estudiante de prueba: no cuenta en estadísticas, actas, CSV ni sellos
+  isTest: false
 };
 
 function getModuleProgress(completedModules, moduleId) {
@@ -382,7 +384,8 @@ export default function AdminPage() {
         id_type: regForm.id_type,
         institution: regForm.institution.trim(),
         cohort: finalCohort,
-        start_date: regForm.start_date || null
+        start_date: regForm.start_date || null,
+        isTest: regForm.isTest === true
       };
 
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/students`, {
@@ -435,12 +438,15 @@ export default function AdminPage() {
   }
 
   const studentList = students.filter(s => s.role !== 'admin');
-  const certifiedCount = studentList.filter(s => (s.examScore ?? 0) >= 90).length;
-  const inProgressCount = studentList.filter(s => (s.examScore ?? 0) < 90).length;
-  const laggingCount = studentList.filter(isStudentLagging).length;
-  const totalIncidents = studentList.reduce((acc, s) => acc + (s.proctoringIncidents || 0) + (s.focusViolations || 0), 0);
-  const avgScore = studentList.filter(s => s.examScore !== null).length > 0
-    ? (studentList.reduce((acc, s) => acc + (s.examScore || 0), 0) / studentList.filter(s => s.examScore !== null).length).toFixed(1)
+  // Los indicadores no cuentan a los estudiantes de prueba (sí aparecen en la tabla, marcados)
+  const realStudents = studentList.filter(s => !s.isTest);
+  const testStudentCount = studentList.length - realStudents.length;
+  const certifiedCount = realStudents.filter(s => (s.examScore ?? 0) >= 90).length;
+  const inProgressCount = realStudents.filter(s => (s.examScore ?? 0) < 90).length;
+  const laggingCount = realStudents.filter(isStudentLagging).length;
+  const totalIncidents = realStudents.reduce((acc, s) => acc + (s.proctoringIncidents || 0) + (s.focusViolations || 0), 0);
+  const avgScore = realStudents.filter(s => s.examScore !== null).length > 0
+    ? (realStudents.reduce((acc, s) => acc + (s.examScore || 0), 0) / realStudents.filter(s => s.examScore !== null).length).toFixed(1)
     : '—';
 
   // Extraer nombres de promociones únicas
@@ -644,7 +650,10 @@ export default function AdminPage() {
           <div className="text-secondary text-xs font-bold uppercase tracking-wider mb-8">
             {selectedCohort === 'all' ? 'Total Estudiantes' : `Matriculados (${selectedCohort})`}
           </div>
-          <div className="title-lg text-cyan" id="stat-total-students">{studentList.length}</div>
+          <div className="title-lg text-cyan" id="stat-total-students">{realStudents.length}</div>
+          {testStudentCount > 0 && (
+            <div className="text-xs text-muted" id="stat-test-students">+{testStudentCount} de prueba (no cuentan)</div>
+          )}
         </div>
         <div className="card p-16 text-center">
           <div className="text-secondary text-xs font-bold uppercase tracking-wider mb-8">Aprobados para Aval IES</div>
@@ -733,10 +742,11 @@ export default function AdminPage() {
               const account = accountStatus(s);
 
               return (
-                <tr key={s.id} data-student-id={s.id} data-student-email={s.email} data-cohort={s.cohort || 'Promoción 1'} data-account-status={account.key}>
+                <tr key={s.id} data-student-id={s.id} data-student-email={s.email} data-cohort={s.cohort || 'Promoción 1'} data-account-status={account.key} data-test-student={s.isTest ? 'true' : undefined}>
                   <td>
                     <div className="font-bold">{s.name}</div>
                     <div className="text-xs text-muted">{s.email}</div>
+                    {s.isTest && <span className="test-badge mt-4 d-inline-block" title="No cuenta en estadísticas, actas, CSV ni sellos">🧪 Prueba</span>}
                     {account.key !== 'active' && (
                       <span className={`${account.className} mt-4 d-inline-block`}>{account.label}</span>
                     )}
@@ -985,6 +995,16 @@ export default function AdminPage() {
                     />
                   </div>
                 </div>
+
+                <label className="text-xs flex items-center gap-8 mt-16" htmlFor="reg-input-is-test">
+                  <input
+                    type="checkbox"
+                    id="reg-input-is-test"
+                    checked={regForm.isTest}
+                    onChange={(e) => setRegForm({ ...regForm, isTest: e.target.checked })}
+                  />
+                  🧪 Estudiante de prueba: para reproducir casos. No cuenta en estadísticas, actas, CSV ni sellos y su certificado no es verificable.
+                </label>
 
               </div>
 

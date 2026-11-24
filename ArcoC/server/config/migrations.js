@@ -288,4 +288,13 @@ export const MIGRATIONS = [
       await db.run('CREATE INDEX IF NOT EXISTS idx_exam_attempts_student ON exam_attempts(student_id)');
     },
   },
+  {
+    version: 4,
+    name: 'estudiantes_de_prueba',
+    // Fase 3: cuentas de prueba para que el admin reproduzca casos. No cuentan en estadísticas,
+    // actas, CSV ni sellos, y sus certificados no son verificables.
+    async up(db) {
+      await db.addColumnIfMissing('students', 'is_test', 'INTEGER DEFAULT 0');
+    },
+  },
 ];

@@ -126,6 +126,7 @@ export default function StudentDetailView({ studentId }) {
           <div className="flex gap-8 flex-wrap mt-8 items-center">
             <span className="badge-admin py-2 px-8 text-xs">{student.cohort}</span>
             <span className={account.className}>{account.label}</span>
+            {student.isTest && <span className="test-badge" id="detail-test-badge">🧪 Estudiante de prueba</span>}
             {access && <span className={access.className}>Promoción {access.label.toLowerCase()}</span>}
           </div>
         </div>
