@@ -22,6 +22,7 @@ Esta guía documenta exhaustivamente la arquitectura del sistema, el modelo de d
 13. [Suite de Pruebas Automatizadas (Playwright)](#13-suite-de-pruebas-automatizadas-playwright)
 14. [Estándares Clínicos y Normativos 2026 (ACHS, ICRP 118, AO Trauma)](#14-estándares-clínicos-y-normativos-2026-achs-icrp-118-ao-trauma)
 15. [Material Académico, Guiones Audiovisuales y Guía de Bolsillo](#15-material-académico-guiones-audiovisuales-y-guía-de-bolsillo)
+16. [Flujo de Trabajo con Git (Ramas, Versiones y Limpieza)](#16-flujo-de-trabajo-con-git-ramas-versiones-y-limpieza)
 
 ---
 
@@ -737,12 +738,13 @@ Los videos definitivos y el build de Unity son artefactos pesados: **no se versi
 ### 6. Dependencias npm y Alertas de Seguridad (Dependabot)
 Versiones clave: **Next.js 16.4.6** (con `eslint-config-next` 16.4.6), **React 19.2.8** y **@vladmandic/face-api 1.7.15**. En Next 16, la versión 16.4.1 corrige las alertas críticas y altas, y la 16.4.5 las moderadas. La serie 16.3 no recibió esos parches: su última versión, la 16.3.8, sigue afectada.
 
-GitHub (Dependabot) revisa **dos** lockfiles en `ArcoC/`, y cada uno se instala por separado:
+GitHub (Dependabot) revisa **tres** lockfiles en `ArcoC/`, y cada uno se instala por separado:
 
 | Lockfile | Lo usa | Contenido |
 | :--- | :--- | :--- |
 | `package-lock.json` | `npm install` en `ArcoC/` (desarrollo y pruebas E2E), `Dockerfile.backend` y `Dockerfile.frontend` | Backend Express y el workspace `client` (frontend Next.js) |
 | `public/documents/package-lock.json` | `convert.js` (compilación de las lecturas a PDF) | `md-to-pdf` y `puppeteer` |
+| `scripts/pg-test/package-lock.json` | `npm run test:pg` (la suite E2E sobre un PostgreSQL 16 desechable; lo instala solo la primera vez) | `embedded-postgres` |
 
 * **El frontend no tiene lockfile propio.** `client/` es un workspace: sus dependencias se instalan y actualizan desde `ArcoC/` (por ejemplo, `npm install <paquete> --workspace=client`), y `Dockerfile.frontend` las instala del mismo lockfile con `npm ci --workspace=client`. Dentro de `client/`, npm también trabaja sobre el workspace raíz (`npm prefix` devuelve `ArcoC/`).
 * **Reconocimiento facial: `@vladmandic/face-api` 1.7.15, con la versión fijada.** No tiene dependencias en tiempo de ejecución, así que ya no arrastra `node-fetch` ni necesita `overrides`. Sustituyó a `face-api.js` 0.22.2, cuyo `@tensorflow/tfjs-core` 1.7.0 fijaba `node-fetch ~2.1.2`, una versión vulnerable (ver sección 8). Ten en cuenta dos cosas:
@@ -752,7 +754,97 @@ GitHub (Dependabot) revisa **dos** lockfiles en `ArcoC/`, y cada uno se instala 
     Copy-Item node_modules\@vladmandic\face-api\dist\face-api.js client\public\workers\face-api.min.js
     ```
   El repositorio del fork está archivado y 1.7.15 es su versión final. Si aparece un fork mantenido que conserve los mismos modelos y el descriptor de 128 valores, conviene migrar a él.
-* **Revisión periódica:** `npm audit` en `ArcoC/` y en `public/documents/` (`npm audit --package-lock-only`). Prefiere `npm audit fix` y versiones menores o de parche. Antes de un salto mayor, lee sus notas; para Next, la guía de `node_modules/next/dist/docs/` (ver `client/AGENTS.md`).
+* **Revisión periódica:** `npm audit` en `ArcoC/`, y en `public/documents/` y `scripts/pg-test/` (`npm audit --package-lock-only`). Prefiere `npm audit fix` y versiones menores o de parche. Antes de un salto mayor, lee sus notas; para Next, la guía de `node_modules/next/dist/docs/` (ver `client/AGENTS.md`).
+
+### 7. Requisitos de Infraestructura: Servidor, Dominio y Correo
+Guía para elegir proveedores con la arquitectura actual: un solo servidor con Docker (PostgreSQL, API Express y Next.js detrás de un proxy inverso con HTTPS), contenido del curso servido solo con sesión, proctoring por WebSocket y correo por SMTP. Precios y condiciones se verifican al contratar.
+
+**Bases del dimensionamiento (medidas en el proyecto):**
+* **Videos:** el módulo 1 (3 videos, unos 9,5 min, H.264 a ~4 Mbps) ocupa unos 280 MB. Con los 5 módulos de 3 videos y duraciones parecidas: unos **1,4 GB**.
+* **Simulador:** build WebGL de **51 MB** sin comprimir; con Brotli en el proxy baja mucho. Modelos de reconocimiento facial: 7 MB. Imágenes y PDF: 13 MB.
+* **Tráfico por estudiante que completa el curso:**
+  * Entre **1,5 GB** (cada video visto una vez) y **3 GB** (visto dos veces), simulador incluido.
+  * 100 estudiantes al mes ≈ 150–300 GB; 500 ≈ 0,75–1,5 TB.
+* **Ancho de banda:** cada persona viendo video usa ~4 Mbps. 50 a la vez ≈ 200 Mbps; 200 a la vez ≈ 800 Mbps.
+* **Correo:** de 5 a 10 por estudiante en todo el curso (bienvenida, recuperación, recordatorios). Son menos de 1.000 al mes aun con varias promociones.
+* **Carga del servidor:**
+  * Lo pesado es servir video.
+  * El examen envía un latido por WebSocket cada 3 s por estudiante.
+  * La detección facial corre en el navegador, no en el servidor.
+* **Datos sensibles:** la base guarda el descriptor facial de cada estudiante (`students.face_descriptor`). Es un dato biométrico, sensible según la Ley 1581 de 2012. El disco y los respaldos deben ir cifrados y el acceso al servidor debe ser restringido.
+
+#### Servidor
+| | Mínimo (piloto, ~50 usuarios simultáneos) | Recomendado (producción, ~200 simultáneos y varias promociones) |
+| :--- | :--- | :--- |
+| **Tipo** | VPS o máquina en la nube con Linux (Ubuntu LTS 24.04 o 26.04), acceso root y Docker | Igual, con snapshots automáticos y opción de crecer sin migrar |
+| **CPU / RAM** | 2 vCPU / 4 GB | 4 vCPU / 8 GB |
+| **Disco** | 60 GB SSD, cifrado | 160 GB NVMe, cifrado (imágenes Docker, registros, respaldos locales y contenido nuevo) |
+| **Tráfico mensual incluido** | 1 TB | 3–5 TB, o videos en un CDN (ver nota) |
+| **Red** | IPv4 fija, puerto de 1 Gbps | Igual |
+| **Base de datos** | PostgreSQL 16 en el mismo servidor (contenedor), con codificación **UTF8** | PostgreSQL 16 administrado (respaldos automáticos y restauración a un punto en el tiempo), o en el servidor con respaldos verificados |
+| **Respaldos** | Base de datos fuera del servidor cada día, cifrada, con 7 días de retención. Contenido (videos, WebGL) al publicarlo | Diarios (30 días) más semanales; prueba de restauración cada trimestre |
+| **Ubicación** | Latencia baja desde Colombia (menos de 100 ms): EE. UU. Este/Sur o una región en Sudamérica | Igual, en un país con protección de datos adecuada según la SIC (consultar su lista vigente) o con autorización expresa de los estudiantes. Acuerdo de tratamiento de datos (DPA) firmado |
+| **Disponibilidad** | — | SLA de 99,9 % o más y un monitor de disponibilidad con alertas |
+| **Entornos** | Solo producción | Producción y *staging*: otro servidor de 2 vCPU / 4 GB, o el mismo con un subdominio y una base aparte |
+
+**Nota sobre el CDN:** hoy los videos los sirve la aplicación tras comprobar la sesión. Para servirlos desde un CDN hacen falta URLs firmadas, lo que requiere cambios en el código. Conviene planearlo si se esperan más de ~100 personas viendo video a la vez.
+
+**Requisitos excluyentes del proveedor (si no los cumple, no sirve):**
+1. **Procesos Node.js permanentes y WebSockets** (Socket.io del proctoring). Esto descarta el *hosting compartido* (cPanel/PHP) y las plataformas solo de archivos estáticos.
+2. **Docker y disco persistente** para la base de datos y el contenido.
+3. **Dominio propio con HTTPS:** los navegadores solo permiten usar la cámara (registro biométrico y proctoring) en sitios seguros.
+4. **Salida a los puertos SMTP 587/465** hacia el proveedor de correo. Algunos proveedores la bloquean en cuentas nuevas: hay que confirmarla o pedir el desbloqueo.
+
+**Configuración del servidor (no depende del proveedor):**
+* Proxy inverso (Caddy o Nginx) con:
+  * certificado automático;
+  * WebSockets habilitados en `/socket.io`;
+  * paso de las cabeceras `Range` para adelantar y retomar videos;
+  * compresión (Brotli o gzip);
+  * tipo MIME `application/wasm` para el simulador.
+* Cortafuegos que solo deje abiertos los puertos 80, 443 y SSH (SSH con llave, sin contraseña).
+* Actualizaciones automáticas de seguridad del sistema.
+* Reloj sincronizado (NTP): las sesiones vencen y las promociones abren y cierran por fecha.
+
+**Pendiente antes de producción:** los Dockerfiles usan `node:20-alpine`, sin soporte desde abril de 2026. El desarrollo y el CI ya corren en Node 26 (CI: `lts/*`), así que las imágenes deben pasar a esa misma versión.
+
+**Preguntas para el proveedor de servidor:**
+* ¿Permite Docker y procesos Node.js permanentes con WebSockets?
+* ¿Cuánto tráfico mensual incluye y cuánto cuesta el excedente? ¿Qué velocidad tiene el puerto?
+* ¿Permite conexiones salientes a los puertos 587 y 465?
+* ¿Ofrece snapshots o respaldos automáticos? ¿En qué región se guardan?
+* ¿En qué país están los centros de datos? ¿Firma un acuerdo de tratamiento de datos?
+* ¿Qué SLA ofrece y cómo es el soporte (idioma, horario, canales)?
+
+**Tipos de proveedor que suelen cumplirlo:** VPS en la nube (por ejemplo DigitalOcean, Akamai/Linode, Vultr, Hetzner o AWS Lightsail) o máquinas de nube pública (AWS, Azure, Google Cloud). El hosting compartido tradicional no sirve.
+
+#### Dominio y DNS
+| | Mínimo | Recomendado |
+| :--- | :--- | :--- |
+| **Dominio** | Uno propio (`.co`, `.com`) o un subdominio institucional (p. ej. `cursos.institucion.edu.co`) | Igual, con renovación automática, bloqueo de transferencia y 2FA en el registrador |
+| **DNS** | Registros A/AAAA, CNAME y TXT editables | Además DNSSEC, registro CAA (que solo Let's Encrypt emita certificados) y TTL configurable |
+| **Subdominios** | `cursos.` para la plataforma | Además `staging.` para pruebas y uno dedicado al envío de correo (p. ej. `notificaciones.`) |
+| **Certificado** | Let's Encrypt automático (Caddy o Nginx) | Igual, con aviso si falla la renovación |
+
+La plataforma y el API deben quedar en el **mismo dominio**, con `/api` y `/socket.io` detrás del proxy inverso: la sesión es una cookie que también valida el frontend. Si el dominio es institucional, el área de TI debe poder crear los registros SPF, DKIM y DMARC que pida el proveedor de correo.
+
+#### Correo transaccional
+| | Mínimo | Recomendado |
+| :--- | :--- | :--- |
+| **Envío** | Relevo SMTP con usuario y contraseña (STARTTLS 587 o TLS 465), que es lo que la plataforma ya usa | Además API HTTPS y *webhooks* de entrega, rebote y queja. Así la bitácora podría mostrar «entregado» o «rebotado»; hoy solo muestra «enviado» |
+| **Autenticación del dominio** | SPF y DKIM del dominio remitente, y DMARC en `p=none` | DMARC alineado, que pasa a `quarantine` o `reject` tras un tiempo de monitoreo, y dominio de rebote (*return-path*) propio |
+| **Remitente** | `no-reply@` de un dominio propio verificado | Subdominio dedicado al envío, que separa su reputación del correo de las personas |
+| **Volumen** | Menos de 1.000 correos al mes: los planes gratuitos o de entrada suelen alcanzar | Margen para picos de matrícula masiva (p. ej. 500 en un día) y límites por minuto conocidos |
+| **Entregabilidad** | IP compartida con buena reputación | Reputación comprobada hacia Microsoft 365/Exchange y Google Workspace (hospitales y universidades), lista de supresión y métricas por mensaje |
+| **Registros** | Historial de envíos de 7 días o más | 30 días o más, con búsqueda por destinatario |
+| **Cumplimiento** | Política de privacidad pública | Acuerdo de tratamiento de datos, certificaciones (ISO 27001 o SOC 2) y ubicación de los datos conocida |
+| **Operación** | 2FA en la cuenta | Credenciales separadas para *staging* y producción, modo de prueba (*sandbox*) y soporte en español |
+
+**Proveedores transaccionales que suelen cumplir el mínimo:** Amazon SES, Brevo, Postmark, Mailgun, SendGrid o Resend.
+
+Microsoft 365 y Google Workspace restringen el SMTP con usuario y contraseña (exigen OAuth2 o contraseñas de aplicación) y tienen límites diarios bajos. Sirven, a lo sumo, para un piloto pequeño; para producción conviene un proveedor transaccional.
+
+**Qué entregar para activar el correo en la plataforma:** `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` y la URL pública (`APP_PUBLIC_URL`). Ver la sección 10.5.
 
 ---
 
@@ -956,4 +1048,58 @@ El script aplica reglas CSS de paginación para evitar cortes viudos en títulos
 
 ---
 
-*C-Arm Master MVP — Versión 1.1.0. Documentación consolidada y actualizada al 6 de octubre de 2026.*
+## 16. Flujo de Trabajo con Git (Ramas, Versiones y Limpieza)
+
+Regla general: **cada rama tiene una sola función y desaparece cuando la cumple.** No se crean ramas «por si acaso».
+
+### 16.1 Ramas
+* **`main`** es la única rama permanente. Siempre debe estar verde: lint sin errores y la suite E2E pasando en SQLite y en PostgreSQL. De ella se despliega.
+* **Ramas de trabajo:** una por propósito, de vida corta y con un nombre que diga para qué existen.
+
+| Prefijo | Para | Ejemplo |
+| :--- | :--- | :--- |
+| `feature/` | Una funcionalidad o una fase del plan | `feature/fase-2-seguimiento` |
+| `fix/` | Una corrección | `fix/main-tras-merge-5` |
+| `docs/` | Solo documentación | `docs/flujo-git-e-infraestructura` |
+| `chore/` | Mantenimiento: dependencias, CI, limpieza | `chore/node-24` |
+
+* Las sesiones paralelas de Claude Code trabajan en ramas `claude/<nombre>` dentro de `.claude/worktrees/`. Siguen la misma regla: al fusionar su PR se borra la rama y se quita el worktree.
+
+### 16.2 Ciclo de una rama
+1. Partir de `main` actualizado (`git pull --ff-only`).
+2. Commits con mensajes descriptivos en español (`tipo: resumen`), con `DOCUMENTATION.md` al día en el mismo trabajo.
+3. Antes de fusionar, en `ArcoC/`, correr estos comandos (los mismos que el CI):
+   * `npm ci`
+   * `npm --workspace=client run lint`
+   * `npm test` (SQLite)
+   * `npm run test:pg` (PostgreSQL)
+
+   Si hay otras sesiones trabajando, tomar antes el cerrojo compartido `%TEMP%\arcoc-e2e.lock`.
+4. Fusionar en `main` (PR en GitHub o `git merge --no-ff` local) y subir.
+5. **Podar:** borrar la rama local (`git branch -d`) y la remota (`git push origin --delete <rama>`), y quitar su worktree (`git worktree remove`, luego `git worktree prune`).
+
+**Conflictos en `package-lock.json`:** no se elige una versión a mano. Se regenera con `npm install` y se comprueba con `npm ci`. El merge del PR #5 perdió así la dependencia `@vladmandic/face-api` y dejó `main` sin poder instalarse limpio hasta que se regeneró.
+
+### 16.3 Respaldos y versiones
+* **Trabajo no fusionado que vale la pena conservar:** antes de borrar la rama, crear una etiqueta anotada `git tag -a archive/<nombre> -m "<por qué se guarda>"` y subirla con `git push origin archive/<nombre>`. La rama se borra y el trabajo queda recuperable.
+* **Hitos:** al cerrar cada fase se crea una etiqueta anotada `vX.Y.Z` sobre `main`, opcionalmente con una *GitHub Release* que resuma la fase. Sirve de punto de retorno.
+* **Numeración:** se usa `0.x` mientras la plataforma no esté en producción. `v1.0.0` será el lanzamiento con los 5 módulos completos. La versión oficial es la etiqueta: el campo `version` de los `package.json` no se usa, porque no se publican en npm.
+
+| Etiqueta | Hito |
+| :--- | :--- |
+| `v0.1.0` | Módulo 1 integrado con el simulador, protección de contenido y reglas anti-trampa |
+| `v0.2.0` | Fase 0: paridad PostgreSQL, migraciones, CI y arreglos del estudiante (con los PR #3, #4 y #6) |
+| `v0.3.0` | Fase 1: promociones, matrícula por enlace, gestión de cuentas, correo y bitácora. Incluye la migración a `@vladmandic/face-api` (PR #5) y la reparación de `main` tras ese merge |
+
+### 16.4 Auditoría rápida
+* `git branch -a` y `git worktree list`: fuera de una tarea en curso solo debe aparecer `main`.
+* `git branch --merged main`: todo lo que aparezca, salvo `main`, se puede borrar.
+
+### 16.5 Configuración recomendada en GitHub
+La aplica el dueño del repositorio en *Settings*:
+* **General → Pull Requests → Automatically delete head branches:** GitHub borra la rama al fusionar el PR.
+* **Branches → protección de `main`** (cuando el CI pueda ejecutarse): exigir PR y checks en verde antes de fusionar.
+
+---
+
+*C-Arm Master MVP — v0.3.0 (Fase 1; numeración de versiones en la sección 16.3). Documentación consolidada y actualizada al 24 de noviembre de 2026.*
