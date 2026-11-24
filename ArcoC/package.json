@@ -15,7 +15,6 @@
     "build": "npm --workspace=client run build",
     "test": "playwright test",
     "seed": "node server/scripts/seed.js",
-    "seed:student": "node server/scripts/seed_student.js",
     "seed:questions": "node server/scripts/seed_50_questions.js",
     "clear": "node server/scripts/clear_users.js"
   },
