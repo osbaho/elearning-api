@@ -74,3 +74,8 @@ export const courseModules = [
 ];
 
 export const ALL_STEPS = courseModules.flatMap(mod => mod.items.map(item => item.key));
+
+/** Datos de cada paso por su clave (título, tipo y módulo), para paneles y reportes. */
+export const STEP_INFO = Object.fromEntries(
+  courseModules.flatMap(mod => mod.items.map(item => [item.key, { ...item, moduleId: mod.id, moduleTitle: mod.title }]))
+);

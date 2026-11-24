@@ -116,7 +116,8 @@ ArcoC/
 │   │   ├── progress.js            # Marcado de pasos con validación secuencial
 │   │   ├── simulator.js           # Partidas del simulador Unity y resultados por fase
 │   │   ├── admin.js               # Listado, auditoría IES, CSV, PDF, sellado, reenvío y recordatorios
-│   │   └── adminManagement.js     # Promociones, matrícula (individual y CSV), edición, estado de cuentas, bitácora
+│   │   ├── adminManagement.js     # Promociones, matrícula (individual y CSV), edición, estado de cuentas, bitácora
+│   │   └── adminProgress.js       # Seguimiento del avance por promoción y ficha del estudiante
 │   ├── utils/
 │   │   ├── certificate.js         # Generación de PDF (PDFKit) y validación pública
 │   │   ├── cohortActa.js          # Acta colectiva y libro de calificaciones por promoción (PDF)
@@ -129,7 +130,8 @@ ArcoC/
 │   │   ├── adminActions.js        # Bitácora de acciones del administrador (admin_actions)
 │   │   ├── access.js              # Ventana de acceso según las fechas de la promoción
 │   │   ├── examQuestions.js       # Preguntas de cada intento sin repetir las ya vistas
-│   │   └── launchReadiness.js     # Qué falta para el lanzamiento: videos, minijuegos y banco de preguntas
+│   │   ├── launchReadiness.js     # Qué falta para el lanzamiento: videos, minijuegos y banco de preguntas
+│   │   └── progressTracking.js    # Avance, mejor nivel por minijuego, última actividad, alertas y ficha
 │   └── scripts/
 │       ├── seed.js                # Inicialización de cuenta de Administrador
 │       ├── seed_50_questions.js   # Banco oficial de 50 preguntas médicas (actualizado a 2026/ACHS)
@@ -159,8 +161,9 @@ ArcoC/
 │       │   ├── course/page.js     # Dashboard central del curso, selector de módulos y guía rápida
 │       │   ├── course/practice/   # Rutas dinámicas para minijuegos interactivos
 │       │   ├── course/exam/page.js# Interfaz del examen y panel de proctoring
-│       │   ├── admin/page.js      # Panel de auditoría para directores IES
-│       │   └── admin/_components/ # Promociones, gestión del estudiante, importación CSV y bitácora
+│       │   ├── admin/page.js      # Panel: auditoría IES y seguimiento del avance (pestañas)
+│       │   ├── admin/_components/ # Promociones, gestión, importación CSV, bitácora, seguimiento y preparación del lanzamiento
+│       │   └── admin/estudiantes/[id]/ # Ficha completa del estudiante
 │       ├── components/
 │       │   ├── ModuleCard.js      # Tarjeta de módulo con estado visual
 │       │   ├── VideoPlayer.js     # Reproductor con control de adelanto (scrubbing)
@@ -182,7 +185,7 @@ ArcoC/
     │   ├── loginHelper.js         # Utilidad de login y reset para tests
     │   ├── simulatorHelper.js     # Partidas del simulador y avance de pasos vía API
     │   └── adminHelper.js         # Sesión de admin en contexto propio, promociones y matrículas vía API
-    └── e2e/                       # 26 suites Playwright (ver sección 13)
+    └── e2e/                       # 27 suites Playwright (ver sección 13)
 ```
 
 En la raíz del monorepo, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) corre el lint del cliente y la suite E2E sobre SQLite y PostgreSQL (ver sección 13).
@@ -687,6 +690,46 @@ La plataforma sale con los 5 módulos completos y el banco oficial de preguntas.
 * **Al arrancar en producción:** el servidor registra un aviso (`⚠️ Preparación del lanzamiento incompleta → …`) si algo falta.
 * **Hoy faltan:** 12 videos y 12 minijuegos (módulos 2 a 5). La base de desarrollo tiene las 5 preguntas iniciales; `npm run seed:questions` carga el banco oficial.
 
+### 10.10 Seguimiento del Avance y Ficha del Estudiante ([`server/services/progressTracking.js`](server/services/progressTracking.js))
+El servidor calcula el seguimiento con lo que ya guarda la base: `course_progress`, `simulator_attempts`, `video_views` y `exam_attempts`. Antes el panel calculaba el avance en el navegador y solo con los primeros 100 estudiantes.
+
+**Pestaña «📈 Seguimiento del avance»** (`GET /api/admin/progress?cohort=&search=&status=&alerts=1&page=&limit=`, hasta 200 por página). Usa los mismos filtros del panel y muestra por estudiante:
+* **Avance:** pasos completados (de 30), porcentaje y paso actual. Si completó la malla, «Examen final»; si aprobó, «Certificado».
+* **Alertas:** ver la tabla de abajo.
+* **Una columna por minijuego** (15, agrupadas por módulo):
+  * El mejor nivel obtenido: 10 perfecta, 5 intermedia, 0 no aprobada, «—» sin partidas.
+  * ✓ si ya lo finalizó.
+  * Al pasar el cursor, el detalle: mejor porcentaje, partidas y puntos.
+  * El mejor resultado se elige por nivel y luego por porcentaje.
+* **Puntos de Reserva.**
+* **Última actividad:** la más reciente entre pasos completados, partidas, videos empezados, intentos del examen e ingreso a la plataforma.
+
+El resumen (estudiantes, avance promedio, certificados y cuántos tienen alertas) cubre todo el filtro. «Solo con alertas» acota la lista, no los totales.
+
+**Alertas.** Son avisos para el admin y no envían correos; la bandeja y el refuerzo aprobado por el admin llegan en la Fase 5. Solo aplican a cuentas activas, no certificadas y con la promoción abierta:
+
+| Alerta | Cuándo |
+| :--- | :--- |
+| 🔑 Sin activar | La cuenta lleva 7 días o más sin activarse |
+| 💤 Inactivo | 7 días o más sin actividad; si nunca empezó, se cuenta desde el inicio de su acceso |
+| 🐢 Atrasado | Con fechas de promoción, su avance está más de 20 puntos por debajo del esperado según el tiempo transcurrido |
+| ⏰ Cierre cercano | La promoción cierra en 7 días o menos |
+| 🎮 Minijuego difícil | 3 o más partidas de un minijuego sin aprobar ninguna, y sin haberlo finalizado |
+| 📝 Sin intentos de examen | Usó los 3 intentos sin aprobar |
+
+Los umbrales están en `ALERT_RULES` (`progressTracking.js`).
+
+**Ficha del estudiante** (`/admin/estudiantes/:id`, con datos de `GET /api/admin/students/:id/detail`). Se abre desde el nombre en el seguimiento o con **📋 Ficha** en la auditoría. Contiene:
+* **Encabezado:** promoción, estado de la cuenta y de la promoción, documento, institución y fechas (matrícula, activación, último ingreso y ventana de acceso).
+* **Resumen:** avance, paso actual, puntos, examen y última actividad, más las alertas.
+* **Avance por módulo:**
+  * Cada video: si lo vio o lo empezó, con fecha.
+  * Cada minijuego: si lo finalizó, su mejor nivel, partidas y puntos.
+  * **Ver partidas** muestra de cada partida el inicio, el estado, el puntaje, los errores, la dosis, el tiempo, el nivel y los puntos.
+* **Examen:** historial de intentos (`exam_attempts`) con estado, nota y respuestas correctas, y el certificado si aprobó.
+* **Incidencias de supervisión** (`exam_logs`), **correos** (`email_logs`) y **acciones del admin** sobre el estudiante.
+* **Línea de tiempo:** todo lo anterior junto, de lo más reciente a lo más antiguo (hasta 300 eventos).
+
 ---
 
 ## 11. Seguridad, Criptografía y Anti-Fraude
@@ -903,10 +946,10 @@ Microsoft 365 y Google Workspace restringen el SMTP con usuario y contraseña (e
 
 ## 13. Suite de Pruebas Automatizadas (Playwright)
 
-El proyecto cuenta con un conjunto integral de **103 pruebas E2E automatizadas** organizadas en **26 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
+El proyecto cuenta con un conjunto integral de **107 pruebas E2E automatizadas** organizadas en **27 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
 
 ```bash
-# Ejecutar todas las 26 suites E2E (103 pruebas) sobre la base de desarrollo (SQLite)
+# Ejecutar todas las 27 suites E2E (107 pruebas) sobre la base de desarrollo (SQLite)
 npx playwright test
 
 # La misma suite sobre un PostgreSQL 16 desechable (sin Docker; detén antes los servidores de desarrollo)
@@ -982,6 +1025,7 @@ Las reglas que dependen del tiempo real (visualización mínima de videos y dura
 | **24** | **`24-admin-management-and-account-pages.test.js`** | **Páginas de acceso y gestión del admin (interfaz):** activación desde `/activar` hasta el registro biométrico; enlaces inválidos o incompletos con indicaciones; «¿Olvidaste tu contraseña?» y `/restablecer` de punta a punta hasta iniciar sesión; cuenta desactivada que ve el motivo al entrar; aviso de modo consulta con la promoción cerrada; crear y editar promociones desde el panel; ficha **⚙️ Gestionar** (editar, cambiar de promoción con motivo, enlace de acceso, desactivar y reactivar, historial) y su reflejo en la bitácora general; importación CSV con vista previa y matrícula de las filas válidas; y filtro por estado de la cuenta. |
 | **25** | **`25-smtp-delivery.test.js`** | **Entrega por SMTP real:** un servidor SMTP local (`smtp-server`) recibe lo que envía el transporte de la API con la configuración `SMTP_*`; comprueba la elección del modo (`smtp`/`log`) y del TLS según el puerto, la autenticación, remitente y destinatario, el asunto y que el enlace de activación llegue completo en HTML y texto, sin contraseñas; y que unas credenciales SMTP incorrectas hagan fallar el envío. |
 | **26** | **`26-course-structure-and-exam-rotation.test.js`** | **Malla de lanzamiento y examen sin preguntas repetidas:** reglas puras (selección de preguntas con bancos de 50, 25 y 5: sin repetir mientras queden sin ver y completando con las del intento más antiguo; un minijuego pendiente no admite partidas en producción y sí fuera de ella; la lista de contenido pendiente coincide con la configuración); todo minijuego exige una partida terminada, también los pendientes; 3 intentos del examen sin preguntas repetidas (solo las inevitables si el banco es menor), el 4.º rechazado y el historial `exam.history` con sus notas; reiniciar un intento abierto conserva sus preguntas y deja el anterior como `abandoned`; `/api/admin/launch-readiness` (solo admin) y la tarjeta del panel; y la práctica de un minijuego pendiente, «en desarrollo», que solo se finaliza tras una partida simulada. |
+| **27** | **`27-progress-tracking-and-student-detail.test.js`** | **Seguimiento del avance y ficha del estudiante:** reglas puras (fechas de ambos motores a ISO, mejor partida por nivel y luego por porcentaje, paso actual y cada alerta con sus excepciones: certificados, cuentas desactivadas y promociones que no están abiertas); `/api/admin/progress` con un estado conocido (avance 3/30, paso actual, mejor nivel y puntos por minijuego, alertas de minijuego difícil y de intentos agotados, «solo con alertas» sin cambiar los totales, paginación); `/api/admin/students/:id/detail` (30 pasos, partidas con su nivel, historial del examen, línea de tiempo ordenada, 404/400 y 403 para estudiantes); y en el panel, la pestaña de seguimiento y la ficha con sus partidas y su línea de tiempo. |
 
 ---
 
@@ -1151,6 +1195,7 @@ Regla general: **cada rama tiene una sola función y desaparece cuando la cumple
 | `v0.1.0` | Módulo 1 integrado con el simulador, protección de contenido y reglas anti-trampa |
 | `v0.2.0` | Fase 0: paridad PostgreSQL, migraciones, CI y arreglos del estudiante (con los PR #3, #4 y #6) |
 | `v0.3.0` | Fase 1: promociones, matrícula por enlace, gestión de cuentas, correo y bitácora. Incluye la migración a `@vladmandic/face-api` (PR #5) y la reparación de `main` tras ese merge |
+| `v0.4.0` | Fase 2: malla de 30 pasos, todo minijuego con partida obligatoria, examen sin preguntas repetidas, preparación del lanzamiento, seguimiento del avance por promoción y ficha del estudiante |
 
 ### 16.4 Auditoría rápida
 * `git branch -a` y `git worktree list`: fuera de una tarea en curso solo debe aparecer `main`.
@@ -1163,4 +1208,4 @@ La aplica el dueño del repositorio en *Settings*:
 
 ---
 
-*C-Arm Master MVP — v0.3.0 (Fase 1; numeración de versiones en la sección 16.3). Documentación consolidada y actualizada al 24 de noviembre de 2026.*
+*C-Arm Master MVP — v0.4.0 (Fase 2; numeración de versiones en la sección 16.3). Documentación consolidada y actualizada al 24 de noviembre de 2026.*

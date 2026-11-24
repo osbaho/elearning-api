@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -11,6 +12,7 @@ import StudentManageModal from './_components/StudentManageModal';
 import ImportStudentsModal from './_components/ImportStudentsModal';
 import AdminActionsModal from './_components/AdminActionsModal';
 import LaunchReadinessCard from './_components/LaunchReadinessCard';
+import ProgressTrackingView from './_components/ProgressTrackingView';
 import { EMAIL_STATUS, accountStatus } from './_components/adminLabels';
 
 const EMPTY_REG_FORM = {
@@ -61,6 +63,8 @@ export default function AdminPage() {
   const [isCohortManagerOpen, setIsCohortManagerOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [isActionsOpen, setIsActionsOpen] = useState(false);
+  // 'audit' = tabla oficial de auditoría IES; 'tracking' = seguimiento del avance por promoción
+  const [view, setView] = useState('audit');
   const [manageStudentId, setManageStudentId] = useState(null);
 
   // Modal de Verificación de Estándar IES
@@ -656,7 +660,34 @@ export default function AdminPage() {
         </div>
       </div>
 
+      {/* Vistas: auditoría IES (tabla oficial) o seguimiento del avance (calculado en el servidor) */}
+      <div className="view-tabs mb-16" role="tablist" aria-label="Vista del panel">
+        <button
+          role="tab"
+          id="tab-view-audit"
+          aria-selected={view === 'audit'}
+          className={`view-tab ${view === 'audit' ? 'active' : ''}`}
+          onClick={() => setView('audit')}
+        >
+          📋 Auditoría IES
+        </button>
+        <button
+          role="tab"
+          id="tab-view-tracking"
+          aria-selected={view === 'tracking'}
+          className={`view-tab ${view === 'tracking' ? 'active' : ''}`}
+          onClick={() => setView('tracking')}
+        >
+          📈 Seguimiento del avance
+        </button>
+      </div>
+
+      {view === 'tracking' && (
+        <ProgressTrackingView cohort={selectedCohort} search={searchQuery} status={statusFilter} />
+      )}
+
       {/* Main Student Table */}
+      {view === 'audit' && (
       <div className="card overflow-auto">
         <div className="p-16 border-bottom flex-between items-center">
           <h2 className="title-sm m-0 text-cyan">
@@ -751,6 +782,14 @@ export default function AdminPage() {
                   </td>
                   <td className="text-center">
                     <div className="flex gap-6 justify-center items-center flex-wrap">
+                      <Link
+                        href={`/admin/estudiantes/${s.id}`}
+                        id={`btn-detail-${s.id}`}
+                        className="btn btn-secondary text-xs px-8 py-4"
+                        title="Ficha completa: avance por paso, partidas, examen, incidencias, correos y línea de tiempo"
+                      >
+                        📋 Ficha
+                      </Link>
                       <button
                         id={`btn-manage-${s.id}`}
                         className="btn btn-secondary text-xs px-8 py-4"
@@ -809,6 +848,7 @@ export default function AdminPage() {
           </tbody>
         </table>
       </div>
+      )}
 
       {/* ─── MODAL 1: REGISTRAR NUEVO ESTUDIANTE EN PROMOCIÓN ─── */}
       {isRegisterModalOpen && (
