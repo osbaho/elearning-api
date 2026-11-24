@@ -323,4 +323,16 @@ export const MIGRATIONS = [
       await db.run('CREATE INDEX IF NOT EXISTS idx_support_cases_student ON support_cases(student_id)');
     },
   },
+  {
+    version: 6,
+    name: 'reintentos_auditados',
+    // Fase 4: el admin reabre un paso tras revisar el caso. Las partidas del minijuego reabierto
+    // se anulan (no se borran) y el examen recibe intentos adicionales; todo queda en la bitácora.
+    async up(db) {
+      await db.addColumnIfMissing('simulator_attempts', 'voided_at', 'TEXT');
+      await db.addColumnIfMissing('simulator_attempts', 'voided_by_admin_id', 'INTEGER');
+      await db.addColumnIfMissing('simulator_attempts', 'void_reason', 'TEXT');
+      await db.addColumnIfMissing('students', 'exam_bonus_attempts', 'INTEGER DEFAULT 0');
+    },
+  },
 ];

@@ -94,6 +94,8 @@ test.describe('Bases de la plataforma: esquema versionado, paridad PostgreSQL y 
       passScore: EXAM_PASS_SCORE_PERCENT,
       wildcardCost: WILDCARD_COST,
       maxAttempts: MAX_EXAM_ATTEMPTS,
+      // Intentos adicionales concedidos por el admin (Fase 4)
+      bonusAttempts: 0,
       attemptsUsed: 1,
       attemptsLeft: MAX_EXAM_ATTEMPTS - 1,
       inProgress: false,

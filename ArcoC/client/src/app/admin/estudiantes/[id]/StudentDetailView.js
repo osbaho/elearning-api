@@ -5,6 +5,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { apiRequest, formatDateTime, formatDay } from '../../../../lib/api';
 import { courseModules } from '../../../../lib/courseConfig';
 import { CASE_CATEGORIES, CASE_STATUS_INFO } from '../../../../lib/supportCases';
+import ReopenControl from './ReopenControl';
 import {
   ACCESS_STATE, ACTION_LABELS, ALERT_INFO, EMAIL_STATUS, EXAM_ATTEMPT_STATUS, INCIDENT_LABELS, TIER_INFO,
   accountStatus, alertText, currentStepLabel, describeDetails, stepLabel,
@@ -25,7 +26,7 @@ function timelineText(e) {
     case 'minigame_played': {
       const tier = TIER_INFO[e.tier];
       return `🎮 Partida en ${stepLabel(e.stepId)}: ${tier ? tier.label.toLowerCase() : e.tier} ` +
-        `(${fmt(e.score)}/${fmt(e.maxScore)}, ${fmt(e.errors)} errores, +${e.points} pts)`;
+        `(${fmt(e.score)}/${fmt(e.maxScore)}, ${fmt(e.errors)} errores, +${e.points} pts)${e.voided ? ' · anulada al reabrir' : ''}`;
     }
     case 'exam_started': return `📝 Inició el intento ${e.number} del examen`;
     case 'exam_submitted': return `📝 Entregó el intento ${e.number}: ${fmt(e.score, 1)}%`;
@@ -49,7 +50,9 @@ function StepStatus({ step }) {
     return <span className="text-muted">Pendiente</span>;
   }
   if (step.completedAt) return <span className="text-green">🏁 Finalizado · {when(step.completedAt)}</span>;
-  if (step.attempts.length > 0) return <span className="text-amber">🎮 En práctica</span>;
+  if (step.attempts.some((a) => !a.voided)) return <span className="text-amber">🎮 En práctica</span>;
+  // Reabierto por el admin: solo tiene partidas anuladas
+  if (step.attempts.length > 0) return <span className="text-amber">↺ Reabierto</span>;
   return <span className="text-muted">Pendiente</span>;
 }
 
@@ -64,15 +67,18 @@ function MinigameAttempts({ step }) {
       </thead>
       <tbody>
         {step.attempts.map((a) => (
-          <tr key={a.id} data-tier={a.tier || 'none'}>
+          <tr key={a.id} data-tier={a.tier || 'none'} data-voided={a.voided ? 'true' : undefined}
+            style={a.voided ? { opacity: 0.55 } : undefined}>
             <td>{when(a.startedAt)}</td>
-            <td>{a.status === 'completed' ? 'Terminada' : 'Sin terminar'}</td>
+            <td title={a.voided ? `Anulada el ${when(a.voidedAt)}: ${a.voidReason || ''}` : undefined}>
+              {a.voided ? '⊘ Anulada' : a.status === 'completed' ? 'Terminada' : 'Sin terminar'}
+            </td>
             <td>{a.score === null ? '—' : `${a.score}/${a.maxScore}`}</td>
             <td>{fmt(a.errorCount)}</td>
             <td>{fmt(a.doseMsv, 2)}</td>
             <td>{fmt(a.timeSeconds, 1)}</td>
             <td>{a.tier ? <span className={`mg-badge ${TIER_INFO[a.tier]?.className || ''}`}>{TIER_INFO[a.tier]?.label || a.tier}</span> : '—'}</td>
-            <td>{a.status === 'completed' ? `+${a.pointsAwarded}` : '—'}</td>
+            <td>{a.status !== 'completed' ? '—' : a.voided ? <s>+{a.pointsAwarded}</s> : `+${a.pointsAwarded}`}</td>
           </tr>
         ))}
       </tbody>
@@ -88,6 +94,8 @@ export default function StudentDetailView({ studentId }) {
   const [detail, setDetail] = useState(null);
   const [error, setError] = useState(null);
   const [openSteps, setOpenSteps] = useState([]);
+  const [reloadKey, setReloadKey] = useState(0);
+  const reload = () => setReloadKey((k) => k + 1);
 
   useEffect(() => {
     let cancelled = false;
@@ -97,7 +105,7 @@ export default function StudentDetailView({ studentId }) {
       else setError(res.error);
     });
     return () => { cancelled = true; };
-  }, [studentId]);
+  }, [studentId, reloadKey]);
 
   const backLink = <Link href="/admin" className="text-cyan text-sm" id="link-back-admin">← Volver al panel</Link>;
 
@@ -206,12 +214,18 @@ export default function StudentDetailView({ studentId }) {
                         <td style={{ width: '40%' }}>{step.type === 'video' ? '🎥' : '🎮'} {stepLabel(step.stepId).replace(/^Mód\. \d+ · /, '')}</td>
                         <td style={{ whiteSpace: 'nowrap' }}><StepStatus step={step} /></td>
                         <td>
-                          {step.type === 'minigame' && step.summary.attempts > 0 && (
+                          {step.type === 'minigame' && step.attempts.length > 0 && (
                             <>
-                              Mejor: <span className={`mg-badge ${TIER_INFO[step.summary.bestTier]?.className || ''}`}>
-                                {TIER_INFO[step.summary.bestTier]?.label} ({step.summary.bestPercent}%)
-                              </span>{' '}
-                              · {step.summary.attempts} partida(s) · {step.summary.points} pts{' '}
+                              {step.summary.attempts > 0 ? (
+                                <>
+                                  Mejor: <span className={`mg-badge ${TIER_INFO[step.summary.bestTier]?.className || ''}`}>
+                                    {TIER_INFO[step.summary.bestTier]?.label} ({step.summary.bestPercent}%)
+                                  </span>{' '}
+                                  · {step.summary.attempts} partida(s) · {step.summary.points} pts{' '}
+                                </>
+                              ) : (
+                                <span className="text-muted">Sin partidas vigentes{' '}</span>
+                              )}
                               <button
                                 className="btn btn-secondary text-xs px-8 py-4 ml-8"
                                 id={`btn-attempts-${step.stepId}`}
@@ -222,10 +236,22 @@ export default function StudentDetailView({ studentId }) {
                             </>
                           )}
                         </td>
+                        <td style={{ textAlign: 'right' }}>
+                          {(step.type === 'video' ? (step.completedAt || step.startedAt) : (step.completedAt || step.attempts.some((a) => !a.voided))) && (
+                            <ReopenControl
+                              studentId={student.id}
+                              stepId={step.stepId}
+                              hint={step.type === 'video'
+                                ? 'Deberá volver a ver el video'
+                                : 'Sus partidas se anulan (no se borran), se descuentan sus puntos y deberá jugar y finalizar de nuevo'}
+                              onDone={reload}
+                            />
+                          )}
+                        </td>
                       </tr>
                       {openSteps.includes(step.stepId) && (
                         <tr>
-                          <td colSpan={3}><MinigameAttempts step={step} /></td>
+                          <td colSpan={4}><MinigameAttempts step={step} /></td>
                         </tr>
                       )}
                     </Fragment>
@@ -244,6 +270,15 @@ export default function StudentDetailView({ studentId }) {
           {exam.certificateCode && (
             <div className="text-sm text-green mb-8">
               🎓 Certificado {exam.certificateCode} · {when(exam.certifiedAt)}
+            </div>
+          )}
+          {!exam.passed && (
+            <div className="flex-between items-center gap-8 flex-wrap mb-12">
+              <span className="text-xs text-secondary" id="detail-exam-attempts">
+                {exam.attemptsUsed} de {exam.maxAttempts} intentos usados{exam.bonusAttempts > 0 ? ` (incluye ${exam.bonusAttempts} adicional(es) concedido(s))` : ''}
+              </span>
+              <ReopenControl studentId={student.id} stepId="exam" label="＋ Conceder un intento extra"
+                hint="Le suma un intento al examen; su historial se conserva" onDone={reload} />
             </div>
           )}
           {exam.history.length === 0 ? (

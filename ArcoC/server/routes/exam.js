@@ -6,7 +6,7 @@ import { generateCertificatePDF, verifyCertificateCode, calculateVerificationCod
 import { TOTAL_COURSE_STEPS, countCompletedCourseSteps, isPracticeStep } from '../config/curriculum.js';
 import { MAX_RESERVE_POINTS, clampToReserveCap } from '../config/reservePoints.js';
 // (E-3) intentos, (E-4) costo del comodín fijado en el servidor — nunca del cliente
-import { WILDCARD_COST, MAX_EXAM_ATTEMPTS, EXAM_QUESTION_COUNT, isExamPassingScore } from '../config/examRules.js';
+import { WILDCARD_COST, EXAM_QUESTION_COUNT, isExamPassingScore, maxAttemptsFor } from '../config/examRules.js';
 import { pickExamQuestionIds, parseQuestionIds } from '../services/examQuestions.js';
 // Modo revisión: el admin recorre el curso, pero no presenta el examen
 import { rejectPreviewUser } from '../services/preview.js';
@@ -372,10 +372,11 @@ router.post('/start-exam', authenticateToken, rejectPreviewUser, requireOpenAcce
     const started = await withTransaction(async (tx) => {
       // Fila del estudiante bloqueada (PostgreSQL): dos inicios simultáneos no consumen el mismo
       // intento ni superan el límite
-      const studentData = await tx.get(`SELECT exam_attempts FROM students WHERE id = ?${lockClause}`, [studentId]);
-      // E-3: límite de intentos
-      if (studentData && studentData.exam_attempts >= MAX_EXAM_ATTEMPTS) {
-        const err = new Error(`Has alcanzado el límite máximo de ${MAX_EXAM_ATTEMPTS} intentos de examen. Contacta con el administrador.`);
+      const studentData = await tx.get(`SELECT exam_attempts, exam_bonus_attempts FROM students WHERE id = ?${lockClause}`, [studentId]);
+      // E-3: límite de intentos (los del reglamento más los que concedió el admin, Fase 4)
+      const maxAttempts = maxAttemptsFor(studentData?.exam_bonus_attempts);
+      if (studentData && studentData.exam_attempts >= maxAttempts) {
+        const err = new Error(`Has alcanzado el límite máximo de ${maxAttempts} intentos de examen. Contacta con el administrador.`);
         err.statusCode = 403;
         throw err;
       }
@@ -416,9 +417,9 @@ router.post('/start-exam', authenticateToken, rejectPreviewUser, requireOpenAcce
         'INSERT INTO exam_logs (student_id, event_type, detail) VALUES (?, ?, ?)',
         [studentId, 'EXAM_STARTED', `Started exam attempt (${questionIds.length} preguntas)`]
       );
-      return { questionCount: questionIds.length, attemptsUsed: (studentData?.exam_attempts || 0) + 1 };
+      return { questionCount: questionIds.length, attemptsUsed: (studentData?.exam_attempts || 0) + 1, maxAttempts };
     });
-    res.json({ success: true, ...started, maxAttempts: MAX_EXAM_ATTEMPTS });
+    res.json({ success: true, ...started });
   } catch (err) {
     if (err.statusCode) {
       return res.status(err.statusCode).json({ error: err.message });

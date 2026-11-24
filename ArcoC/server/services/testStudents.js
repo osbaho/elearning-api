@@ -24,7 +24,7 @@ export async function resetProgress(tx, studentId) {
   }
   await tx.run(
     `UPDATE students
-        SET reserve_points = 0, exam_score = NULL, exam_attempts = 0, exam_in_progress = 0,
+        SET reserve_points = 0, exam_score = NULL, exam_attempts = 0, exam_bonus_attempts = 0, exam_in_progress = 0,
             exam_question_ids = NULL, proctoring_incidents = 0, focus_violations = 0
       WHERE id = ?`,
     [studentId]
@@ -76,17 +76,19 @@ export async function copyStudentState(tx, sourceId, targetId) {
 
   const attempts = await tx.all(
     `SELECT step_id, scene, phase, status, started_at, completed_at, score, max_score, passed, error_count,
-            dose_msv, time_seconds, tier, points_awarded
+            dose_msv, time_seconds, tier, points_awarded, voided_at, voided_by_admin_id, void_reason
        FROM simulator_attempts WHERE student_id = ?`,
     [sourceId]
   );
   for (const a of attempts) {
     await tx.run(
       `INSERT INTO simulator_attempts (id, student_id, step_id, scene, phase, status, started_at, completed_at, score,
-                                       max_score, passed, error_count, dose_msv, time_seconds, tier, points_awarded)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                       max_score, passed, error_count, dose_msv, time_seconds, tier, points_awarded,
+                                       voided_at, voided_by_admin_id, void_reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [crypto.randomUUID(), targetId, a.step_id, a.scene, a.phase, a.status, a.started_at, a.completed_at, a.score,
-        a.max_score, a.passed, a.error_count, a.dose_msv, a.time_seconds, a.tier, a.points_awarded]
+        a.max_score, a.passed, a.error_count, a.dose_msv, a.time_seconds, a.tier, a.points_awarded,
+        a.voided_at, a.voided_by_admin_id, a.void_reason]
     );
   }
 
@@ -111,15 +113,15 @@ export async function copyStudentState(tx, sourceId, targetId) {
   }
 
   const source = await tx.get(
-    `SELECT reserve_points, exam_score, exam_attempts, proctoring_incidents, focus_violations FROM students WHERE id = ?`,
+    `SELECT reserve_points, exam_score, exam_attempts, exam_bonus_attempts, proctoring_incidents, focus_violations FROM students WHERE id = ?`,
     [sourceId]
   );
   await tx.run(
     `UPDATE students
-        SET reserve_points = ?, exam_score = ?, exam_attempts = ?, proctoring_incidents = ?, focus_violations = ?,
-            exam_in_progress = 0, exam_question_ids = NULL
+        SET reserve_points = ?, exam_score = ?, exam_attempts = ?, exam_bonus_attempts = ?, proctoring_incidents = ?,
+            focus_violations = ?, exam_in_progress = 0, exam_question_ids = NULL
       WHERE id = ?`,
-    [source.reserve_points ?? 0, source.exam_score ?? null, source.exam_attempts ?? 0,
+    [source.reserve_points ?? 0, source.exam_score ?? null, source.exam_attempts ?? 0, source.exam_bonus_attempts ?? 0,
       source.proctoring_incidents ?? 0, source.focus_violations ?? 0, targetId]
   );
 

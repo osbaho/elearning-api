@@ -120,6 +120,7 @@ ArcoC/
 │   │   ├── adminProgress.js       # Seguimiento del avance por promoción y ficha del estudiante
 │   │   ├── adminTestStudents.js   # Herramientas para estudiantes de prueba (reiniciar, llevar a un paso, copiar)
 │   │   ├── adminSupportCases.js   # Bandeja de casos reportados y respuesta al estudiante
+│   │   ├── adminReopen.js         # Reintentos auditados: reabrir un paso o conceder un intento del examen
 │   │   └── supportCases.js        # «Reportar un problema» del estudiante y sus reportes
 │   ├── utils/
 │   │   ├── certificate.js         # Generación de PDF (PDFKit) y validación pública
@@ -137,7 +138,8 @@ ArcoC/
 │   │   ├── launchReadiness.js     # Qué falta para el lanzamiento: videos, minijuegos y banco de preguntas
 │   │   ├── progressTracking.js    # Avance, mejor nivel por minijuego, última actividad, alertas y ficha
 │   │   ├── testStudents.js        # Estudiantes de prueba: exclusión de estadísticas y herramientas
-│   │   └── supportCases.js        # Validación y formato de los casos reportados
+│   │   ├── supportCases.js        # Validación y formato de los casos reportados
+│   │   └── reopen.js              # Reabrir pasos: anular partidas, descontar puntos, intentos adicionales
 │   └── scripts/
 │       ├── seed.js                # Inicialización de cuenta de Administrador
 │       ├── seed_50_questions.js   # Banco oficial de 50 preguntas médicas (actualizado a 2026/ACHS)
@@ -195,7 +197,7 @@ ArcoC/
     │   ├── loginHelper.js         # Utilidad de login y reset para tests
     │   ├── simulatorHelper.js     # Partidas del simulador y avance de pasos vía API
     │   └── adminHelper.js         # Sesión de admin en contexto propio, promociones y matrículas vía API
-    └── e2e/                       # 30 suites Playwright (ver sección 13)
+    └── e2e/                       # 31 suites Playwright (ver sección 13)
 ```
 
 En la raíz del monorepo, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) corre el lint del cliente y la suite E2E sobre SQLite y PostgreSQL (ver sección 13).
@@ -322,6 +324,10 @@ Historial de intentos del examen, una fila por intento:
 #### 12. `support_cases` (migración 5)
 Casos de «Reportar un problema» (sección 10.13): `student_id`, `step_id` (paso de la malla, `exam` o vacío), `category` (`video` | `minigame` | `exam` | `account` | `other`), `description`, `context` (JSON con URL, navegador y tamaño de ventana), `status` (`open` | `resolved` | `rejected`), `created_at`, `resolved_at`, `resolved_by_admin_id` y `resolution` (la respuesta que recibe el estudiante).
 
+#### Columnas agregadas por la migración 6
+* `simulator_attempts`: `voided_at`, `voided_by_admin_id` y `void_reason`, para las partidas anuladas al reabrir un minijuego. Se conservan, pero no cuentan (sección 10.14).
+* `students.exam_bonus_attempts` (0 por defecto): intentos adicionales del examen concedidos por el admin.
+
 #### Columna agregada por la migración 4
 * `students.is_test` (0 por defecto): estudiante de prueba, excluido de estadísticas, actas, CSV, sellos y verificación de certificados (sección 10.12).
 
@@ -433,6 +439,7 @@ El 70 % es el mismo `passScorePercent` de las `MinigameConfig` de Unity. "Perfec
 5. **Correlación:** la fase reportada debe coincidir con la del intento (422) y el intento debe pertenecer al estudiante (404).
 6. **Plausibilidad de tiempo:** el tiempo de juego reportado no puede superar el tiempo real transcurrido desde que el servidor creó el intento (+5 s de margen; 422).
 7. **Sin puntos tras finalizar:** si el minijuego ya fue finalizado no se crean partidas ni se aceptan resultados (409).
+   Las partidas **anuladas** al reabrir un minijuego (sección 10.14) no cuentan para finalizarlo, para el tope por minijuego ni para las estadísticas. Un resultado para una partida anulada responde 409.
 8. **`/api/add-points` es solo de desarrollo y pruebas:** en producción responde 404. Exige `source` válido (paso práctico de la malla) y no completado.
 9. **Comunicación WebGL segura:** el build se sirve desde el mismo origen (`client/public/webgl`), Unity publica con `targetOrigin` = su propio origen y `SimulatorView` descarta mensajes que no vengan de su iframe. No hacen falta variables `NEXT_PUBLIC_SIMULATOR_*`.
 
@@ -525,7 +532,7 @@ sequenceDiagram
 * **Intento abierto obligatorio:** `/api/start-exam` abre el intento y fija su set de preguntas. Sin intento abierto, `/api/questions`, `/api/submit-exam` y `/api/use-wildcard` responden `409`. Así no se pueden ver preguntas sin consumir un intento ni enviar exámenes sin pasar por el límite de 3.
 * **Set de preguntas fijo por intento:** recargar la página devuelve las mismas preguntas. `/api/submit-exam` exige responder exactamente ese set (no se pueden elegir preguntas) con opciones `a`–`d`, y la respuesta no revela qué preguntas fueron correctas.
 * **Costo Inmutable del Comodín 50/50:** Fijado rígidamente en el servidor en **100 Puntos de Reserva**. Cualquier parámetro de costo enviado desde el navegador es descartado. Solo se puede usar dentro del intento y sobre una de sus preguntas.
-* **Límite de Intentos:** Máximo **3 intentos**; cada clic en "Empezar Examen" consume uno. Si había uno abierto, el nuevo conserva sus preguntas y el anterior queda como `abandoned` en el historial. Antes de empezar, la página muestra los intentos usados y restantes; sin intentos lo explica y deshabilita el botón, y si se llama a la API igualmente, `/api/start-exam` responde `403`. El inicio corre en una transacción que bloquea la fila del estudiante (PostgreSQL): dos inicios simultáneos no consumen el mismo intento ni superan el límite. Al calificar, el intento queda `submitted` con su nota; si lo cierra el proctoring, `suspended`.
+* **Límite de Intentos:** Máximo **3 intentos**, más los adicionales que conceda el admin tras una revisión (`maxAttemptsFor`, sección 10.14); cada clic en "Empezar Examen" consume uno. Si había uno abierto, el nuevo conserva sus preguntas y el anterior queda como `abandoned` en el historial. Antes de empezar, la página muestra los intentos usados y restantes; sin intentos lo explica y deshabilita el botón, y si se llama a la API igualmente, `/api/start-exam` responde `403`. El inicio corre en una transacción que bloquea la fila del estudiante (PostgreSQL): dos inicios simultáneos no consumen el mismo intento ni superan el límite. Al calificar, el intento queda `submitted` con su nota; si lo cierra el proctoring, `suspended`.
 * **Perfil al día:** al iniciar y al enviar el examen, la página vuelve a pedir `/api/student/me`, así que al volver al curso la nota, el estado de aprobación y los intentos restantes son los reales sin recargar.
 * **Bloqueo de Reenvío Aprobado:** Si el estudiante ya aprobó, `/api/start-exam` y `/api/submit-exam` responden `409 Conflict`.
 * **Malla completa en producción:** `/api/start-exam`, `/api/questions` y `/api/submit-exam` exigen los 30 pasos completados cuando `NODE_ENV=production`.
@@ -653,7 +660,7 @@ Toda modificación hecha desde el panel queda registrada con el administrador, l
 * **Estados reales:** `sent` (entregado al servidor SMTP), `simulated` (modo sin SMTP: no salió), `queued` y `failed`. La migración 2 marcó como `simulated` los registros anteriores, que decían `sent` aunque ningún correo salía del servidor.
 * **Sin secretos en la bitácora:** `body_content` guarda el HTML con los enlaces privados ocultos. El contenido real va cifrado (AES-256-GCM) en `payload_encrypted` y se borra al enviarse. La migración 2 ocultó también las contraseñas temporales que las inducciones anteriores habían guardado en texto plano.
 * **Transporte:** `MAIL_TRANSPORT=smtp` con `SMTP_HOST`, `SMTP_PORT` (465 = TLS directo; 587 = STARTTLS), `SMTP_USER`, `SMTP_PASS` y `MAIL_FROM`. Sirve para cualquier proveedor (Amazon SES, Brevo, Postmark, Microsoft 365, Google Workspace…). Sin `SMTP_HOST` el modo es `log` (simulado). En producción el arranque avisa si no hay SMTP, y `/api/health` informa `mail: smtp | log`.
-* **Plantillas ([`server/services/emailService.js`](server/services/emailService.js)):** bienvenida con enlace de activación (`induction_activation`), guía para cuentas ya activadas (`induction`), restablecimiento de contraseña (`password_reset`), recordatorio de avance (`progress_reminder`) y respuesta a un reporte del estudiante (`case_answered`, sección 10.13). Los enlaces usan `APP_PUBLIC_URL`.
+* **Plantillas ([`server/services/emailService.js`](server/services/emailService.js)):** bienvenida con enlace de activación (`induction_activation`), guía para cuentas ya activadas (`induction`), restablecimiento de contraseña (`password_reset`), recordatorio de avance (`progress_reminder`) respuesta a un reporte del estudiante (`case_answered`, sección 10.13) y aviso de un paso reabierto o un intento adicional (`step_reopened`, sección 10.14). Los enlaces usan `APP_PUBLIC_URL`.
 
 ### 10.6 Evaluación del Estándar Institucional IES (6 Criterios Obligatorios)
 Al seleccionar a cualquier estudiante y pulsar **"🔍 Ver Estándar IES"**, la plataforma evalúa en servidor (`GET /api/admin/compliance/:studentId`) el cumplimiento riguroso de los **6 limitantes del estándar de acreditación**:
@@ -663,7 +670,7 @@ Al seleccionar a cualquier estudiante y pulsar **"🔍 Ver Estándar IES"**, la 
 | **1. Identificación y Biometría** | `STD_BIO_ID` | Documento legal institucional y vector facial de 128 puntos registrado. | `is_onboarded == 1` && `id_number` válido && `face_descriptor` presente. |
 | **2. Completitud Curricular** | `STD_CURRICULUM` | Aprobación del 100% de la malla (30 de 30 pasos obligatorios sin saltos). | Pasos completados de `COURSE_STEPS` ≥ `TOTAL_COURSE_STEPS` en `course_progress`. |
 | **3. Calificación en Examen** | `STD_EXAM_SCORE` | Nota mínima del 90% en intentos de 10 preguntas (`examRules.js`). | `exam_score >= EXAM_PASS_SCORE_PERCENT`. |
-| **4. Límite de Intentos** | `STD_MAX_ATTEMPTS` | Máximo 3 intentos de examen permitidos según reglamento IES. | `exam_attempts <= 3`. |
+| **4. Límite de Intentos** | `STD_MAX_ATTEMPTS` | Máximo 3 intentos de examen permitidos según reglamento IES, más los adicionales autorizados por el admin (sección 10.14). | `exam_attempts <= 3 + exam_bonus_attempts`. |
 | **5. Integridad de Supervisión** | `STD_PROCTORING_INTEGRITY` | Tolerancia máxima de 5 incidencias acumuladas de cámara o foco. | `(proctoring_incidents + focus_violations) <= 5`. |
 | **6. Emisión Criptográfica QR** | `STD_CRYPTO_CERT` | Código HMAC-SHA256 generado y trazable en base de datos. | Registro `'exam'` con `certificate_code` presente. |
 
@@ -834,6 +841,33 @@ El estudiante avisa de un problema desde el paso donde le ocurre. El admin lo at
 * La ficha del estudiante lista sus reportes, y la línea de tiempo muestra cuándo los abrió y cuándo se cerraron.
 
 Los modales del estudiante se dibujan en `document.body` (portal). Dentro de una tarjeta con `transform` (`.card:hover`), un elemento `position: fixed` queda atado a la tarjeta y se mueve con ella.
+
+
+### 10.14 Reintentos Auditados ([`server/services/reopen.js`](server/services/reopen.js))
+Cuando una revisión individual lo justifica (por ejemplo, tras un reporte), el admin reabre un paso desde la ficha del estudiante. La decisión siempre lleva motivo: queda en la bitácora con lo que cambió (`student.reopen`) y se le envía al estudiante por correo (plantilla `step_reopened`).
+
+El endpoint es `POST /api/admin/students/:id/reopen` con `{ stepId, reason, caseId? }`. Cada tipo de paso se reabre así:
+
+| Paso | Botón en la ficha | Efecto |
+| :--- | :--- | :--- |
+| Video | **↺ Reabrir** | Se borra el registro de visto y el inicio de reproducción: debe volver a verlo |
+| Minijuego | **↺ Reabrir** | Sus partidas se **anulan** (`voided_at`, `voided_by_admin_id`, `void_reason`), sin borrarse. Se descuentan los puntos que dieron (el saldo no baja de 0) y el paso deja de estar finalizado |
+| Examen (`exam`) | **＋ Conceder un intento extra** | Suma un intento (`students.exam_bonus_attempts`). El historial de intentos se conserva |
+
+**Qué se mantiene:**
+* Los pasos posteriores que ya había completado siguen completados.
+* Las partidas anuladas siguen en la ficha, tachadas y con su motivo, como evidencia.
+
+**Las partidas anuladas no cuentan en ningún lado:**
+* ni para finalizar el minijuego;
+* ni para el tope de 50 puntos por minijuego;
+* ni en el estado del paso, el seguimiento o el resumen de la ficha.
+
+Un resultado que llega para una partida anulada mientras se jugaba responde `409`.
+
+**Cuándo no se puede reabrir (`409`):** un video que no empezó, un minijuego sin partidas o el examen de quien ya aprobó. El motivo es obligatorio (`400`).
+
+**Límite de intentos del examen:** es `maxAttemptsFor(bonus)`, los 3 del reglamento más los concedidos. Lo usan `/api/start-exam`, `/api/student/me` (`exam.maxAttempts`, `exam.bonusAttempts`, `exam.attemptsLeft`), el seguimiento, la alerta de intentos agotados y el criterio 4 del estándar IES. En el criterio, los intentos concedidos cuentan como autorizados y se indica cuántos fueron. Es una decisión reversible, tomada el 2026-11-24.
 
 ---
 
@@ -1051,10 +1085,10 @@ Microsoft 365 y Google Workspace restringen el SMTP con usuario y contraseña (e
 
 ## 13. Suite de Pruebas Automatizadas (Playwright)
 
-El proyecto cuenta con un conjunto integral de **115 pruebas E2E automatizadas** organizadas en **30 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
+El proyecto cuenta con un conjunto integral de **119 pruebas E2E automatizadas** organizadas en **31 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
 
 ```bash
-# Ejecutar todas las 30 suites E2E (115 pruebas) sobre la base de desarrollo (SQLite)
+# Ejecutar todas las 31 suites E2E (119 pruebas) sobre la base de desarrollo (SQLite)
 npx playwright test
 
 # La misma suite sobre un PostgreSQL 16 desechable (sin Docker; detén antes los servidores de desarrollo)
@@ -1134,6 +1168,7 @@ Las reglas que dependen del tiempo real (visualización mínima de videos y dura
 | **28** | **`28-admin-course-preview.test.js`** | **Modo revisión del administrador:** por API, el admin marca un paso fuera de orden y recibe `{ preview: true }` sin que cambie su avance; juega un minijuego fuera de orden, la partida se registra como perfecta con 0 puntos; y el examen (`/start-exam`, `/questions`, `/submit-exam`, `/use-wildcard`) responde 403 `PREVIEW_MODE`. En el navegador: entra al curso desde el panel, ve el aviso de revisión, los pasos y el examen desbloqueados, juega una partida simulada sin botón de finalizar y ve el aviso del examen en lugar del botón para empezar. |
 | **29** | **`29-test-students.test.js`** | **Estudiantes de prueba:** se matriculan con `isTest` y se listan marcados, pero no cuentan en las métricas de la promoción, el resumen del seguimiento, el CSV ni el sello. Su certificado (con el estado copiado de un estudiante aprobado) no se valida en `/api/verify`, y el del estudiante real sí. Herramientas: con un estudiante real responden 409; llevar a `m2_v1` deja 6 pasos; copiar el estado de un estudiante con un video y una partida perfecta trae 2 pasos, la partida y sus puntos sin cambiar al origen; reiniciar vuelve a cero; todo queda en la bitácora con su motivo; se puede desmarcar la cuenta. En el panel: la marca y el indicador «+1 de prueba», y «Llevar a un paso» desde **⚙️ Gestionar**. |
 | **30** | **`30-support-cases.test.js`** | **Reportar un problema:** validaciones puras del reporte (categoría, paso, longitud, solo las claves conocidas del contexto) y de la respuesta. El estudiante reporta un minijuego; el admin no puede abrir casos ni el estudiante ver la bandeja (403); la bandeja trae el caso con su contexto; cerrarlo exige respuesta, un caso cerrado no se cierra de nuevo (409) y uno inexistente da 404; el estudiante ve la respuesta; quedan la bitácora (`case.resolve`), el correo `case_answered`, los reportes de la ficha y su línea de tiempo; con 5 casos abiertos el siguiente da 429. En el navegador: el estudiante reporta desde la tarjeta de un video (categoría preseleccionada) y lo ve en «Mis reportes»; el admin lo encuentra en la bandeja, lo resuelve y pasa a «Resueltos». |
+| **31** | **`31-audited-retries.test.js`** | **Reintentos auditados:** qué pasos se pueden reabrir (función pura). Al reabrir un minijuego finalizado con dos partidas (15 pts), ambas quedan anuladas y se descuentan sus puntos; el paso queda pendiente y el siguiente sigue completado; sin una partida nueva no se finaliza, y la nueva vuelve a sumar 10. La ficha conserva las anuladas con su motivo, y quedan la bitácora y el correo. También se verifica que el motivo sea obligatorio (400), que un paso inválido dé 400, que un minijuego sin partidas dé 409 y que un estudiante no pueda reabrir (403). Un video reabierto deja de estar visto. Con 3 intentos usados, un intento concedido permite empezar otro (`maxAttempts` 4) y el criterio 4 del estándar IES lo da por autorizado; a quien aprobó no se le concede (409). En la ficha: «↺ Reabrir» con motivo deja el minijuego «Reabierto» y muestra sus partidas anuladas. |
 
 ---
 

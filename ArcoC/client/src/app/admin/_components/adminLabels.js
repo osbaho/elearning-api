@@ -40,6 +40,7 @@ export const ACTION_LABELS = {
   'test.copy_from': 'Copió a la cuenta de prueba el estado de otro estudiante',
   'case.resolve': 'Resolvió un reporte del estudiante',
   'case.reject': 'Cerró sin cambios un reporte del estudiante',
+  'student.reopen': 'Reabrió un paso del curso (reintento autorizado)',
 };
 
 export const EMAIL_STATUS = {
@@ -109,6 +110,9 @@ export function describeDetails(details) {
     return `${details.created.length} creados, ${(details.skipped || []).length} omitidos`;
   }
   if (details.purpose) return details.purpose === 'activation' ? 'Activación de cuenta' : 'Restablecer contraseña';
+  if (details.kind === 'exam') return `Intento adicional del examen (${details.bonusAttempts} concedido(s) en total)`;
+  if (details.kind === 'minigame') return `Minijuego ${details.stepId}: ${details.voidedAttempts} partida(s) anulada(s), −${details.pointsRemoved} pts`;
+  if (details.kind === 'video') return `Video ${details.stepId}`;
   if (details.caseId) return `Reporte #${details.caseId}${details.stepId ? ` (${details.stepId})` : ''}`;
   if (details.stepId) return `Paso ${details.stepId} (${details.completedSteps} completados)`;
   if (details.sourceEmail) return `Desde ${details.sourceEmail}: ${details.steps} pasos, ${details.attempts} partidas`;

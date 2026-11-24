@@ -783,7 +783,7 @@ export default function AdminPage() {
                       {s.examScore !== null ? `${score}%` : 'Pendiente'}
                     </span>
                     {s.examAttempts > 0 && (
-                      <div className="text-xs text-muted font-normal">{s.examAttempts}/3 intentos</div>
+                      <div className="text-xs text-muted font-normal">{s.examAttempts}/{s.examMaxAttempts ?? 3} intentos</div>
                     )}
                   </td>
                   <td>

@@ -6,7 +6,7 @@ import { authenticateToken } from '../middleware/auth.js';
 import { loginLimiter, accountRecoveryLimiter } from '../middleware/rateLimiter.js';
 import { encryptText, decryptText } from '../utils/crypto.js';
 import {
-  EXAM_QUESTION_COUNT, EXAM_PASS_SCORE_PERCENT, MAX_EXAM_ATTEMPTS, WILDCARD_COST
+  EXAM_QUESTION_COUNT, EXAM_PASS_SCORE_PERCENT, WILDCARD_COST, maxAttemptsFor
 } from '../config/examRules.js';
 import { getStudentAccess, accessBlockedMessage } from '../services/access.js';
 import {
@@ -20,7 +20,7 @@ const SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000; // 12 horas
 
 // Columnas que necesita buildStudentDto (sin contraseña ni descriptor facial)
 const STUDENT_DTO_COLUMNS =
-  'id, name, email, role, reserve_points, exam_score, exam_attempts, exam_in_progress, is_onboarded, face_descriptor';
+  'id, name, email, role, reserve_points, exam_score, exam_attempts, exam_bonus_attempts, exam_in_progress, is_onboarded, face_descriptor';
 
 /** Política de contraseñas: al menos 8 caracteres, con letras y números. Devuelve el error o null. */
 export function passwordPolicyError(password) {
@@ -76,6 +76,7 @@ async function buildStudentDto(student) {
   );
   const completedModules = progressRecords.map(p => p.module_id);
   const attemptsUsed = Number(student.exam_attempts) || 0;
+  const maxAttempts = maxAttemptsFor(student.exam_bonus_attempts);
   const access = await getStudentAccess(student.id);
   // Historial de intentos del examen (sin las preguntas): in_progress | submitted | suspended | abandoned
   const examHistory = await all(
@@ -98,9 +99,11 @@ async function buildStudentDto(student) {
       questionCount: EXAM_QUESTION_COUNT,
       passScore: EXAM_PASS_SCORE_PERCENT,
       wildcardCost: WILDCARD_COST,
-      maxAttempts: MAX_EXAM_ATTEMPTS,
+      maxAttempts,
+      // Intentos adicionales que concedió el admin tras revisar su caso (Fase 4)
+      bonusAttempts: Number(student.exam_bonus_attempts) || 0,
       attemptsUsed,
-      attemptsLeft: Math.max(0, MAX_EXAM_ATTEMPTS - attemptsUsed),
+      attemptsLeft: Math.max(0, maxAttempts - attemptsUsed),
       inProgress: !!Number(student.exam_in_progress),
       // 'exam' solo se registra en course_progress al aprobar
       passed: completedModules.includes('exam'),
