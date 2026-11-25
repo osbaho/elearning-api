@@ -6,6 +6,7 @@ client/.next
 # Secretos y datos locales: los secretos llegan en tiempo de ejecución desde docker-compose.yml.
 **/.env*
 **/*.sqlite
+**/*.sqlite.tmp
 # Resultados de las pruebas E2E.
 test-results
 playwright-report
