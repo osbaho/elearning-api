@@ -13,6 +13,8 @@ export default function ModuleCard({
   isLocked,
   isCurrent,
   videoSrc,
+  // Subtítulos WebVTT del video (courseConfig: captionsSrc), si existen
+  captionsSrc,
   moduleKey,
   onComplete,
   onStart,
@@ -70,7 +72,9 @@ export default function ModuleCard({
         <div className="mb-16 mt-16">
           <VideoPlayer
             src={videoSrc}
+            captionsSrc={captionsSrc}
             moduleKey={moduleKey}
+            preview={preview}
             isCompleted={isCompleted || preview}
             onComplete={preview ? undefined : onComplete}
             onStart={preview ? undefined : onStart}
