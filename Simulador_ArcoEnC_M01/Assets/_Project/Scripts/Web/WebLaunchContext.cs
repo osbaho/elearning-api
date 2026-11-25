@@ -6,7 +6,7 @@ namespace CArmSimulator.Web
 {
     /// <summary>
     /// Parámetros con los que la plataforma ArcoC lanza el simulador dentro de su iframe:
-    ///   /webgl/index.html?attempt=&lt;uuid&gt;&amp;step=m1_s1&amp;scene=Scene1&amp;phase=1
+    ///   /webgl/index.html?attempt=&lt;uuid&gt;&amp;step=m1_s1&amp;scene=Modulo01&amp;phase=1
     /// La API decide escena y fase según su catálogo; Unity solo las obedece y devuelve
     /// cada resultado etiquetado con attempt y step para que la plataforma lo correlacione.
     /// Sin estos parámetros (Editor o build abierto directamente) el simulador funciona en modo local.

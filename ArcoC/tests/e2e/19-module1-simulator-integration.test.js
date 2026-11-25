@@ -113,7 +113,7 @@ test.describe('Módulo 1: malla, videos y simulador', () => {
     const created = await req.post(`${API}/simulator/attempts`, { data: { stepId: 'm1_s1' } });
     expect(created.status()).toBe(201);
     const attempt = await created.json();
-    expect(attempt).toMatchObject({ stepId: 'm1_s1', scene: 'Scene1', phase: 1 });
+    expect(attempt).toMatchObject({ stepId: 'm1_s1', scene: 'Modulo01', phase: 1 });
 
     // Validaciones del resultado
     const resultUrl = `${API}/simulator/attempts/${attempt.attemptId}/result`;
@@ -201,7 +201,7 @@ test.describe('Módulo 1: malla, videos y simulador', () => {
     const iframe = page.locator('iframe[title^="Simulador C-Arm"]');
     await expect(iframe).toBeVisible();
     const src = await iframe.getAttribute('src');
-    expect(src).toMatch(/^\/webgl\/index\.html\?attempt=[0-9a-f-]{36}&step=m1_s1&scene=Scene1&phase=1$/);
+    expect(src).toMatch(/^\/webgl\/index\.html\?attempt=[0-9a-f-]{36}&step=m1_s1&scene=Modulo01&phase=1$/);
     await expect(page.locator('aside')).toContainText('Simulador listo');
 
     const frame = page.frames().find(f => f.url().includes('/webgl/index.html'));
@@ -247,7 +247,7 @@ test.describe('Módulo 1: malla, videos y simulador', () => {
     await expect(page.locator('aside')).toContainText('Simulador listo', { timeout: 200000 });
 
     // Unity leyó attempt/step/scene/phase de la URL (WebLaunchContext) y el jslib corre en el navegador
-    await expect.poll(() => sawLog('[WebLaunch]', attemptId, 'step=m1_s1', 'scene=Scene1', 'phase=1'), { timeout: 15000 }).toBeTruthy();
+    await expect.poll(() => sawLog('[WebLaunch]', attemptId, 'step=m1_s1', 'scene=Modulo01', 'phase=1'), { timeout: 15000 }).toBeTruthy();
     await expect.poll(() => sawLog('[SCORM] Sin LMS SCORM'), { timeout: 15000 }).toBeTruthy();
 
     // Acuse plataforma → Unity: plantilla → SendMessage → ScormBridge.OnHostMessage (C#)

@@ -6,7 +6,8 @@ import { pickExamQuestionIds } from '../../server/services/examQuestions.js';
 import { pendingCourseContent } from '../../server/services/launchReadiness.js';
 import { attemptBlockReason, getSimulatorEntry } from '../../server/config/simulatorCatalog.js';
 import { COURSE_STEPS, VIDEO_DURATION_SECONDS, isPracticeStep, isVideoStep } from '../../server/config/curriculum.js';
-import { EXAM_QUESTION_COUNT, MAX_EXAM_ATTEMPTS } from '../../server/config/examRules.js';
+import { EXAM_QUESTION_BANK_TARGET, EXAM_QUESTION_COUNT, MAX_EXAM_ATTEMPTS } from '../../server/config/examRules.js';
+import { QUESTION_BANK, buildQuestionRows } from '../../server/scripts/seed_50_questions.js';
 
 /** Generador pseudoaleatorio con semilla (mulberry32): selección reproducible en las pruebas. */
 function seededRandom(seed) {
@@ -67,6 +68,32 @@ test.describe('Malla de lanzamiento (30 pasos) y examen sin preguntas repetidas'
     expect(sorted(pickExamQuestionIds([1, 1, 2, 2, 3], [], 10, random))).toEqual([1, 2, 3]);
   });
 
+  test('Banco oficial: 50 preguntas, 10 por categoría, la correcta repartida por igual y un 50/50 sin pistas', () => {
+    expect(QUESTION_BANK).toHaveLength(EXAM_QUESTION_BANK_TARGET);
+    const perCategory = {};
+    for (const q of QUESTION_BANK) perCategory[q.category] = (perCategory[q.category] || 0) + 1;
+    expect(Object.values(perCategory)).toEqual([10, 10, 10, 10, 10]);
+    expect(new Set(QUESTION_BANK.map((q) => q.text.trim().toLowerCase())).size).toBe(QUESTION_BANK.length);
+
+    // El seed es reproducible: mismos ids y mismas letras correctas cada vez
+    const rows = buildQuestionRows();
+    expect(buildQuestionRows()).toEqual(rows);
+    const letters = ['a', 'b', 'c', 'd'];
+    expect(letters.map((k) => rows.filter((r) => r.correct_answer === k).length)).toEqual([13, 13, 12, 12]);
+    rows.forEach((row, i) => {
+      const q = QUESTION_BANK[i];
+      const options = { a: row.option_a, b: row.option_b, c: row.option_c, d: row.option_d };
+      expect(options[row.correct_answer], `pregunta ${i + 1}`).toBe(q.b);
+      expect(Object.values(options).sort()).toEqual([q.a, q.b, q.c, q.d].sort());
+      expect(row.wildcard_eliminates).toMatch(/^[a-d]{2}$/);
+      expect(row.wildcard_eliminates).not.toContain(row.correct_answer);
+      expect(row.poison_text).not.toContain(`"${row.correct_answer.toUpperCase()}"`);
+    });
+    // Tras el 50/50 quedan la correcta y una incorrecta cualquiera: la que queda no delata a la correcta
+    const kept = rows.map((r) => letters.find((k) => k !== r.correct_answer && !r.wildcard_eliminates.includes(k)));
+    expect(new Set(kept).size).toBe(4);
+  });
+
   test('Un minijuego pendiente no admite partidas en producción; fuera de producción sí', () => {
     expect(attemptBlockReason('m1_s1', { production: true })).toBeNull();
     expect(attemptBlockReason('m9_s9', { production: false })).toContain('no tiene contenido');
@@ -82,6 +109,12 @@ test.describe('Malla de lanzamiento (30 pasos) y examen sin preguntas repetidas'
     expect(videos).toEqual(COURSE_STEPS.filter((s) => isVideoStep(s) && !(VIDEO_DURATION_SECONDS[s] > 0)));
     expect(minigames).toEqual(COURSE_STEPS.filter((s) => isPracticeStep(s) && !getSimulatorEntry(s).ready));
     expect([...videos, ...minigames].some((s) => s.startsWith('m1_'))).toBe(false);
+
+    // Estándar de nombres: cada módulo es la escena ModuloNN y cada minijuego, una de sus fases
+    for (const step of COURSE_STEPS.filter(isPracticeStep)) {
+      const [, moduleNumber, phase] = /^m(\d+)_s(\d+)$/.exec(step);
+      expect(getSimulatorEntry(step), step).toMatchObject({ scene: `Modulo${moduleNumber.padStart(2, '0')}`, phase: Number(phase) });
+    }
   });
 
   test('Todo minijuego exige una partida terminada, también los que aún no están en el simulador', async () => {

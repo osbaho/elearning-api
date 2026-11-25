@@ -276,14 +276,21 @@ Registra el avance individual por paso:
 * Restricción: `UNIQUE(student_id, module_id)`
 
 #### 3. `questions`
-Banco de preguntas de opción múltiple (50 reactivos oficiales estandarizados según normativas OIEA, ICRP 118, ACHS y AO Trauma):
+Banco de preguntas de opción múltiple (50 reactivos oficiales estandarizados exclusivamente en mecánica, radioprotección, operación del Arco en C y cirugía ortopédica según OIEA, ICRP 118, ACHS, Res. 1811 y AO Trauma):
 * `id` (INTEGER / SERIAL PRIMARY KEY). `npm run seed:questions` reemplaza el banco y reinicia la numeración, así que el oficial queda siempre con ids 1–50 en ambos motores (antes empezaba en 6 si la base ya tenía las 5 preguntas iniciales).
-* `category`: Categoría médica (*Física y Espectro*, *Protección y Blindaje*, *Estándares ACHS y Operación*, *Tecnología FPD e IA*, *Anatomía y Proyecciones*, *Protocolos Quirúrgicos*)
+* `category`: Categoría médica (*Normativa y Límites de Dosis*, *Radioprotección y Blindaje ALARA*, *Mecánica y Operación del Arco en C*, *Protocolos de Seguridad en Sala*, *Proyecciones Ortopédicas y Anatomía*)
 * `text`: Enunciado de la pregunta clínica
 * `poison_text`: Texto señuelo invisible para despistar agentes de IA
 * `option_a`, `option_b`, `option_c`, `option_d`: Opciones de respuesta
 * `correct_answer`: Letra correcta (`'a'`, `'b'`, `'c'`, `'d'`)
-* `wildcard_eliminates`: Opciones incorrectas a descartar por el comodín 50/50 (ej: `'ac'`, `'b,d'`)
+* `wildcard_eliminates`: Opciones incorrectas a descartar por el comodín 50/50 (ej: `'ac'`, `'bd'`)
+
+El banco vive en [`server/scripts/seed_50_questions.js`](server/scripts/seed_50_questions.js) (`QUESTION_BANK`: en cada pregunta, la correcta va en `b` y los distractores en `a`, `c` y `d`). `buildQuestionRows` la reparte en las opciones A–D con un generador de semilla fija, así que cada seed deja el banco igual:
+* la respuesta correcta queda repartida por igual entre A, B, C y D (13/13/12/12), sin un patrón por posición;
+* el comodín elimina dos incorrectas elegidas al azar, así que la opción que queda no delata a la correcta (antes siempre quedaba la última en orden alfabético);
+* `poison_text` le pide a un agente de IA una opción incorrecta.
+
+La suite 26 valida el banco: 50 preguntas, 10 por categoría, sin repetidas, y esas tres reglas. Importar el archivo no toca la base: el seed solo corre al ejecutarlo (`npm run seed:questions`).
 
 #### 4. `exam_logs`
 Bitácora de auditoría forense del examen:
@@ -384,16 +391,16 @@ El programa académico consta de **5 módulos temáticos** y **30 pasos obligato
 | Paso | Contenido | Archivo / Simulador |
 | :--- | :--- | :--- |
 | `m1_v1` | Video 1: Historia, Física y Pilares S.E.R. | `/videos/modulo1/M01_V01_SER.mp4` |
-| `m1_s1` | Minijuego 1: Protocolo Cero | `Scene1`, fase 1 (`MG1_ProtocolZero`) |
+| `m1_s1` | Minijuego 1: Protocolo Cero | `Modulo01`, fase 1 (`MG1_ProtocolZero`) |
 | `m1_v2` | Video 2: Densidades, Unidades y Normativa | `/videos/modulo1/M01_V02_Fisica.mp4` |
-| `m1_s2` | Minijuego 2: Maestro del Haz | `Scene1`, fase 2 (`MG2_BeamMaster`) |
+| `m1_s2` | Minijuego 2: Maestro del Haz | `Modulo01`, fase 2 (`MG2_BeamMaster`) |
 | `m1_v3` | Video 3: Geometría del Arco en C | `/videos/modulo1/M01_V03_Geometria.mp4` |
-| `m1_s3` | Minijuego 3: Comando Isocentro | `Scene1`, fase 3 (`MG3_IsocenterCommand`) |
+| `m1_s3` | Minijuego 3: Comando Isocentro | `Modulo01`, fase 3 (`MG3_IsocenterCommand`) |
 
-**Módulos 2–5 (contenido en producción, 6 pasos cada uno):**
-* Los videos 1 y 2 tienen título y guion (`docs/guiones/`). El video 3 todavía no tiene guion: los guiones de estos módulos siguen con 2 videos y un recopilatorio.
-* Mientras no exista su contenido, los videos muestran un placeholder (duración `null` en `VIDEO_DURATION_SECONDS`).
-* Los minijuegos tienen su escena y fase previstas en el catálogo del simulador (`Scene2`…`Scene5`, fases 1–3) con `ready: false`. La práctica se muestra «en desarrollo» (sección 6).
+**Módulos 2–5 (guiones completos, video/simulador en producción, 6 pasos cada uno):**
+* Los 3 videos (`v1`, `v2`, `v3`) de cada módulo tienen su título, descripción (`courseConfig.js`) y guion maestro listo para **HeyGen Video Agent** en `docs/guiones/guion_modulo_2.md`–`guion_modulo_5.md` (rebalanceados en 3 cápsulas temáticas sin video recopilatorio).
+* Mientras no se rendericen y preparen los `.mp4` definitivos, los videos muestran un placeholder (duración `null` en `VIDEO_DURATION_SECONDS`).
+* Los 12 minijuegos tienen su `minigameId`, `title`, escena y fase previstas en `simulatorCatalog.js` (y su diseño mecánico y códigos de error documentados en `docs/guiones/`), con `ready: false` hasta incorporar sus escenas en Unity. La práctica se muestra «en desarrollo» (sección 6).
 * El panel del admin lista lo que falta en **Preparación del lanzamiento** (sección 10.9).
 
 **Fuente única de verdad:** la lista ordenada vive en [`server/config/curriculum.js`](server/config/curriculum.js) (`COURSE_STEPS`, usada por progreso, examen, admin y correos) y en [`client/src/lib/courseConfig.js`](client/src/lib/courseConfig.js) (títulos, videos e íconos). El test E2E 19 falla si ambas listas difieren. Los totales (30) se calculan; no hay constantes repartidas por el código (tampoco en el acta, el CSV, el panel admin ni los correos).
@@ -421,7 +428,7 @@ La **API es la dueña de la correlación**: decide qué escena y fase juega cada
 ```
 Página /course/practice/m1_s1 (SimulatorView.js)
   1. POST /api/simulator/attempts { stepId }          → { attemptId, scene, phase }
-  2. <iframe src="/webgl/index.html?attempt=…&step=m1_s1&scene=Scene1&phase=1">   (mismo origen)
+  2. <iframe src="/webgl/index.html?attempt=…&step=m1_s1&scene=Modulo01&phase=1">   (mismo origen)
 Unity WebGL (plantilla CArmEmbed + ScormBridge + ArcoEnC_SCORM.jslib)
   3. Carga escena y fase (WebLaunchContext / WebSceneRouter); el estudiante juega
   4. postMessage → { source: "carm-sim", v: 1, type: "phase-result", attemptId, stepId,
@@ -487,9 +494,9 @@ El 70 % es el mismo `passScorePercent` de las `MinigameConfig` de Unity. "Perfec
 9. **Comunicación WebGL segura:** el build se sirve desde el mismo origen (`client/public/webgl`), Unity publica con `targetOrigin` = su propio origen y `SimulatorView` descarta mensajes que no vengan de su iframe. No hacen falta variables `NEXT_PUBLIC_SIMULATOR_*`.
 
 ### Catálogo del Simulador ([`server/config/simulatorCatalog.js`](server/config/simulatorCatalog.js))
-Cada uno de los 15 minijuegos de la malla tiene su entrada `{ scene, phase, minSeconds, minigameId, title, ready }`:
-* **Módulo 1:** `m1_s1 → Scene1/1`, `m1_s2 → Scene1/2`, `m1_s3 → Scene1/3`, con `ready: true`.
-* **Módulos 2–5:** `mN_sK → SceneN/K`, con `ready: false` hasta que su escena esté en el build.
+Cada uno de los 15 minijuegos de la malla tiene su entrada `{ scene, phase, minSeconds, minigameId, title, ready }`. Cada módulo es una escena del build con nombre estándar **`ModuloNN`** (`Assets/Scenes/Modulo01.unity`, `Modulo02`…) y sus tres minijuegos son las fases 1–3 de esa escena; la suite 26 lo verifica.
+* **Módulo 1:** `m1_s1 → Modulo01/1`, `m1_s2 → Modulo01/2`, `m1_s3 → Modulo01/3`, con `ready: true`.
+* **Módulos 2–5:** `mN_sK → Modulo0N/K`, con su `minigameId` y título definitivos y `ready: false` hasta que su escena esté en el build.
 * **`minSeconds`:** 30 en todos; se ajusta con datos reales de juego.
 
 Cuando un minijuego tiene `ready: false`:
@@ -502,7 +509,7 @@ La regla es una función pura, `attemptBlockReason(stepId, { production })`, que
 ### Cómo incorporar el siguiente módulo (proceso repetible)
 1. **Videos:** dejar los masters `M0N_V0k_Master_<Tema>.mp4` en la carpeta de masters y ejecutar `scripts/prepare-module-videos.ps1 -Module N -SourceDir <carpeta>`.
 2. **Malla:** los pasos del módulo ya existen (6 por módulo). Reemplazar los `null` de `VIDEO_DURATION_SECONDS` en `server/config/curriculum.js` por las duraciones que imprimió el script, y en `client/src/lib/courseConfig.js` poner títulos, descripciones y `videoSrc: '/videos/moduloN/...'`.
-3. **Unity:** crear la escena del módulo en el mismo proyecto, añadirla a Build Settings y fijar sus fases (1..3) en `CArmUIController`/escena.
+3. **Unity:** crear la escena del módulo en el mismo proyecto con el nombre estándar `ModuloNN` (`Assets/Scenes/Modulo02.unity`, …), añadirla a Build Settings y fijar sus fases (1..3) en `CArmUIController`/escena. Si la plataforma pide una escena que no está en el build, Unity se queda en la escena inicial y lo anota en la consola (`WebSceneRouter`).
 4. **Catálogo:** en `simulatorCatalog.js`, ajustar `scene`, `minigameId` y `title` de cada `mN_sK` y poner `ready: true`.
 5. **Build:** en Unity, menú **CArm → Build WebGL para ArcoC** (genera `client/public/webgl`).
 6. **Pruebas y documentación:** ejecutar la suite y actualizar este documento. La tarjeta «Preparación del lanzamiento» del panel deja de listar el módulo.
@@ -1188,10 +1195,10 @@ Microsoft 365 y Google Workspace restringen el SMTP con usuario y contraseña (e
 
 ## 13. Suite de Pruebas Automatizadas (Playwright)
 
-El proyecto cuenta con un conjunto integral de **135 pruebas E2E automatizadas** organizadas en **35 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
+El proyecto cuenta con un conjunto integral de **136 pruebas E2E automatizadas** organizadas en **35 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
 
 ```bash
-# Ejecutar todas las 35 suites E2E (135 pruebas) sobre la base de desarrollo (SQLite)
+# Ejecutar todas las 35 suites E2E (136 pruebas) sobre la base de desarrollo (SQLite)
 npx playwright test
 
 # La misma suite sobre un PostgreSQL 16 desechable (sin Docker; detén antes los servidores de desarrollo)
@@ -1272,7 +1279,7 @@ Las reglas que dependen del tiempo real (visualización mínima de videos y dura
 | **23** | **`23-enrollment-activation-and-access.test.js`** | **Matrícula, activación y acceso (API):** la matrícula no lleva contraseña y la cuenta pendiente no entra; el enlace de activación se valida (`token-info` con nombre sin títulos y correo enmascarado), rechaza contraseñas débiles, abre la sesión y no sirve dos veces; desactivar exige motivo, corta la sesión abierta y el login, bloquea enlaces y recordatorios, y reactivar lo devuelve, todo en la bitácora; las fechas de la promoción impiden entrar antes del inicio (la fecha individual lo reemplaza) y dejan el curso en modo consulta tras el cierre (progreso, partidas y examen → `403 COHORT_CLOSED`); «olvidé mi contraseña» responde igual exista o no el correo, envía activación o restablecimiento según el caso, y restablecer cierra las demás sesiones; la importación CSV valida fila por fila (repetidos, inválidos, existentes, promoción inexistente; comillas y `;`) y matricula solo las válidas; promociones con fechas validadas, nombre único, renombrado que arrastra a sus estudiantes y sellado que bloquea cambios y matrículas. |
 | **24** | **`24-admin-management-and-account-pages.test.js`** | **Páginas de acceso y gestión del admin (interfaz):** activación desde `/activar` hasta el registro biométrico; enlaces inválidos o incompletos con indicaciones; «¿Olvidaste tu contraseña?» y `/restablecer` de punta a punta hasta iniciar sesión; cuenta desactivada que ve el motivo al entrar; aviso de modo consulta con la promoción cerrada; crear y editar promociones desde el panel; ficha **⚙️ Gestionar** (editar, cambiar de promoción con motivo, enlace de acceso, desactivar y reactivar, historial) y su reflejo en la bitácora general; importación CSV con vista previa y matrícula de las filas válidas; y filtro por estado de la cuenta. |
 | **25** | **`25-smtp-delivery.test.js`** | **Entrega por SMTP real:** un servidor SMTP local (`smtp-server`) recibe lo que envía el transporte de la API con la configuración `SMTP_*`; comprueba la elección del modo (`smtp`/`log`) y del TLS según el puerto, la autenticación, remitente y destinatario, el asunto y que el enlace de activación llegue completo en HTML y texto, sin contraseñas; y que unas credenciales SMTP incorrectas hagan fallar el envío. |
-| **26** | **`26-course-structure-and-exam-rotation.test.js`** | **Malla de lanzamiento y examen sin preguntas repetidas:** reglas puras (selección de preguntas con bancos de 50, 25 y 5: sin repetir mientras queden sin ver y completando con las del intento más antiguo; un minijuego pendiente no admite partidas en producción y sí fuera de ella; la lista de contenido pendiente coincide con la configuración); todo minijuego exige una partida terminada, también los pendientes; 3 intentos del examen sin preguntas repetidas (solo las inevitables si el banco es menor), el 4.º rechazado y el historial `exam.history` con sus notas; reiniciar un intento abierto conserva sus preguntas y deja el anterior como `abandoned`; `/api/admin/launch-readiness` (solo admin) y la tarjeta del panel; y la práctica de un minijuego pendiente, «en desarrollo», que solo se finaliza tras una partida simulada. |
+| **26** | **`26-course-structure-and-exam-rotation.test.js`** | **Malla de lanzamiento y examen sin preguntas repetidas:** el banco oficial (50 preguntas, 10 por categoría, sin repetidas; la correcta repartida 13/13/12/12 entre A–D y reproducible; un 50/50 que no delata a la correcta; la trampa anti-IA apunta a una incorrecta); el estándar de escenas del simulador (cada módulo es `ModuloNN` y cada minijuego, una de sus fases); reglas puras (selección de preguntas con bancos de 50, 25 y 5: sin repetir mientras queden sin ver y completando con las del intento más antiguo; un minijuego pendiente no admite partidas en producción y sí fuera de ella; la lista de contenido pendiente coincide con la configuración); todo minijuego exige una partida terminada, también los pendientes; 3 intentos del examen sin preguntas repetidas (solo las inevitables si el banco es menor), el 4.º rechazado y el historial `exam.history` con sus notas; reiniciar un intento abierto conserva sus preguntas y deja el anterior como `abandoned`; `/api/admin/launch-readiness` (solo admin) y la tarjeta del panel; y la práctica de un minijuego pendiente, «en desarrollo», que solo se finaliza tras una partida simulada. |
 | **27** | **`27-progress-tracking-and-student-detail.test.js`** | **Seguimiento del avance y ficha del estudiante:** reglas puras (fechas de ambos motores a ISO, mejor partida por nivel y luego por porcentaje, paso actual y cada alerta con sus excepciones: certificados, cuentas desactivadas y promociones que no están abiertas); `/api/admin/progress` con un estado conocido (avance 3/30, paso actual, mejor nivel y puntos por minijuego, alertas de minijuego difícil y de intentos agotados, «solo con alertas» sin cambiar los totales, paginación); `/api/admin/students/:id/detail` (30 pasos, partidas con su nivel, historial del examen, línea de tiempo ordenada, 404/400 y 403 para estudiantes); y en el panel, la pestaña de seguimiento y la ficha con sus partidas y su línea de tiempo. |
 | **28** | **`28-admin-course-preview.test.js`** | **Modo revisión del administrador:** por API, el admin marca un paso fuera de orden y recibe `{ preview: true }` sin que cambie su avance; juega un minijuego fuera de orden, la partida se registra como perfecta con 0 puntos; y el examen (`/start-exam`, `/questions`, `/submit-exam`, `/use-wildcard`) responde 403 `PREVIEW_MODE`. En el navegador: entra al curso desde el panel, ve el aviso de revisión, los pasos y el examen desbloqueados, juega una partida simulada sin botón de finalizar y ve el aviso del examen en lugar del botón para empezar. |
 | **29** | **`29-test-students.test.js`** | **Estudiantes de prueba:** se matriculan con `isTest` y se listan marcados, pero no cuentan en las métricas de la promoción, el resumen del seguimiento, el CSV ni el sello. Su certificado (con el estado copiado de un estudiante aprobado) no se valida en `/api/verify`, y el del estudiante real sí. Herramientas: con un estudiante real responden 409; llevar a `m2_v1` deja 6 pasos; copiar el estado de un estudiante con un video y una partida perfecta trae 2 pasos, la partida y sus puntos sin cambiar al origen; reiniciar vuelve a cero; todo queda en la bitácora con su motivo; se puede desmarcar la cuenta. En el panel: la marca y el indicador «+1 de prueba», y «Llevar a un paso» desde **⚙️ Gestionar**. |
@@ -1388,16 +1395,10 @@ Las lecturas académicas residen en formato Markdown estructurado en `public/doc
 * Integra las tablas de angulaciones anatómicas esenciales, factores de técnica radiológica (kV/mA por región), checklist 5-P, atajos de consolas (GE, Philips, Siemens, Ziehm), y los protocolos de emergencia radiológica.
 * **Acceso Directo en Plataforma:** Enlazada de forma prominente en la barra lateral del dashboard del curso ([`client/src/app/course/page.js`](file:///c:/Oscar/ArcoC/client/src/app/course/page.js)), permitiendo su descarga instantánea con un solo clic.
 
-### 15.3 Guiones Técnicos para Producción Audiovisual con IA (`docs/guiones/`)
-El directorio `docs/guiones/` contiene los libretos de producción técnica para la síntesis de videos educativos mediante modelos generativos audiovisuales (con estilo hiperrealista o animación médica 3D de grado quirúrgico):
-* **Regla de Duración Estricta:** Ningún video supera los **8 minutos** de duración total (tiempos promedio entre 4:30 y 6:30 min) para garantizar retención cognitiva y evitar sobrecarga informativa.
-* **Estructura Escénica:** Cada guion especifica locución en *voz en off* (audio en español neutro profesional), descripción visual detallada de planos de cámara, ángulos de quirófano, esquemas de dispersión de rayos X y superposiciones de texto clínico clave (*lower thirds*).
-* **Escenas Críticas Incorporadas:**
-  * Escena de Protección Gestacional y Dosimetría Abdominal en Módulo 2.
-  * Demostración de FPD vs Intensificador de Imagen y Reducción con IA en Módulo 3.
-  * Comparativa de Consolas de Fabricante (GE OEC, Philips, Siemens, Ziehm) en Módulo 3.
-  * Demostración del "Modo Metal" y extracción de rejilla en pediatría (*Image Gently*) en Módulo 3.
-  * Escenarios ortopédicos reales AO Trauma (fémur, rodilla, tobillo, húmero, radio, columna) en Módulos 4 y 5.
+### 15.3 Guiones Técnicos para Producción Audiovisual con HeyGen (`docs/guiones/`)
+El directorio `docs/guiones/` contiene los libretos de producción técnica:
+* **Módulo 1 (`guion_modulo_1.md`):** Guion histórico de referencia (el módulo 1 ya cuenta con sus 3 videos definitivos publicados en `client/public/videos/modulo1/`).
+* **Módulos 2–5 (`guion_modulo_2.md`–`guion_modulo_5.md`):** Rebalanceados en **3 videos por módulo** (~3:05 a 3:25 min cada uno, sin video recopilatorio) y redactados como **prompts maestros listos para copiar y pegar en HeyGen Video Agent** (`16:9`, presentadora única *Custom Avatar* **Dra. Nova**, recursos de archivo sin copyright y *motion graphics* limpios, dirigidos a todo el equipo de quirófano y explicando cada sigla en inglés primero en inglés y luego en español), junto con la especificación mecánica y de códigos de error de los 12 minijuegos (`m2_s1`–`m5_s3`).
 
 ### 15.4 Pipeline de Compilación y Renderizado Documental
 Para regenerar los PDFs oficiales tras cualquier modificación en los textos en Markdown:

@@ -71,6 +71,8 @@ namespace CArmSimulator.Editor
         }
         private const int LAYER_BONE_XRAY = 8;
         private const string LAYER_NAME = "BoneXRay";
+        // Escena del módulo 1, con el nombre estándar ModuloNN que también usa el catálogo de la API
+        private const string Module1ScenePath = "Assets/Scenes/Modulo01.unity";
 
         // HUD Neon Cyan Palette
         private static readonly Color HUD_BG_DARK       = new Color(6f / 255f, 20f / 255f, 27f / 255f, 0.88f);
@@ -100,8 +102,8 @@ namespace CArmSimulator.Editor
 
             try
             {
-                // 0. Ensure Scene1 is active
-                string scenePath = "Assets/Scenes/Scene1.unity";
+                // 0. Escena del módulo 1 activa (nombre estándar ModuloNN)
+                string scenePath = Module1ScenePath;
                 var activeScene = EditorSceneManager.GetActiveScene();
                 File.AppendAllText("Temp/setup_status.txt", $"Active scene: '{activeScene.path}', isDirty: {activeScene.isDirty} at " + DateTime.Now + "\n");
                 if (File.Exists(scenePath) && activeScene.path != scenePath)
@@ -1527,12 +1529,11 @@ namespace CArmSimulator.Editor
             }
             else
             {
-                string scenePath = "Assets/Scenes/Scene1.unity";
-                EditorSceneManager.SaveScene(activeScene, scenePath);
+                EditorSceneManager.SaveScene(activeScene, Module1ScenePath);
             }
 
-            EnsureSceneInBuildSettings("Assets/Scenes/Scene1.unity");
-            Debug.Log("[CArmSetup] Prefab 'CArm_Rig.prefab' y 'Scene1.unity' guardados en disco exitosamente.");
+            EnsureSceneInBuildSettings(Module1ScenePath);
+            Debug.Log($"[CArmSetup] Prefab 'CArm_Rig.prefab' y '{Module1ScenePath}' guardados en disco exitosamente.");
         }
 
         private static void EnsureSceneInBuildSettings(string scenePath)
