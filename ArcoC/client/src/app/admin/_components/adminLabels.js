@@ -43,6 +43,9 @@ export const ACTION_LABELS = {
   'student.reopen': 'Reabrió un paso del curso (reintento autorizado)',
   'alert.postpone': 'Pospuso una alerta del seguimiento',
   'alert.dismiss': 'Descartó una alerta del seguimiento',
+  'alert.send': 'Envió un correo de refuerzo',
+  'template.update': 'Editó una plantilla de los correos de refuerzo',
+  'template.restore': 'Restauró el texto original de una plantilla de refuerzo',
 };
 
 /** Estados de la bandeja de alertas (services/alertInbox.js). */

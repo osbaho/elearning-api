@@ -5,6 +5,7 @@ import { authenticateToken, requireAdmin } from '../middleware/auth.js';
 import { generateCertificatePDF } from '../utils/certificate.js';
 import { generateCohortActaPDF } from '../utils/cohortActa.js';
 import { sendWelcomeInductionEmail, sendProgressReminderEmail } from '../services/emailService.js';
+import { reinforcementAllowance } from '../services/reinforcement.js';
 import { TOTAL_COURSE_STEPS, isCourseStep, countCompletedCourseSteps } from '../config/curriculum.js';
 import { EXAM_PASS_SCORE_PERCENT, EXAM_QUESTION_COUNT, MAX_EXAM_ATTEMPTS, isExamPassingScore, maxAttemptsFor } from '../config/examRules.js';
 import { issueToken, TOKEN_PURPOSES } from '../services/authTokens.js';
@@ -534,6 +535,9 @@ router.post('/send-reminder/:studentId', authenticateToken, checkAdmin, async (r
     if (!Number(student.is_active ?? 1)) {
       return res.status(409).json({ error: 'La cuenta está desactivada: no se envían recordatorios.' });
     }
+    // Mismo límite que los correos de refuerzo de la bandeja: uno cada 24 horas y dos por semana
+    const allowance = await reinforcementAllowance(studentId);
+    if (!allowance.allowed) return res.status(429).json({ error: allowance.reason });
 
     const stepRows = await all(`
       SELECT module_id FROM course_progress WHERE student_id = ? AND status = 'completed'

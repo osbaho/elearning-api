@@ -232,6 +232,7 @@ function entryDto(e, row) {
     decidedBy: e.decided_by_admin_id ? { id: Number(e.decided_by_admin_id), name: e.admin_name || null } : null,
     note: e.decision_note || null,
     emailLogId: e.email_log_id ? Number(e.email_log_id) : null,
+    emailStatus: e.email_status || null,
     resolvedAt: toIso(e.resolved_at),
     progress: row
       ? {
@@ -246,10 +247,12 @@ function entryDto(e, row) {
 }
 
 const ENTRY_SELECT = `
-  SELECT e.*, s.name AS student_name, s.email AS student_email, s.cohort AS student_cohort, a.name AS admin_name
+  SELECT e.*, s.name AS student_name, s.email AS student_email, s.cohort AS student_cohort, a.name AS admin_name,
+         m.status AS email_status
     FROM alert_inbox e
     JOIN students s ON s.id = e.student_id
-    LEFT JOIN students a ON a.id = e.decided_by_admin_id`;
+    LEFT JOIN students a ON a.id = e.decided_by_admin_id
+    LEFT JOIN email_logs m ON m.id = e.email_log_id`;
 
 /** Cuántas entradas hay de cada estado con los filtros dados. */
 export async function countEntries(filters = {}) {
@@ -305,7 +308,7 @@ export async function listInbox({ view = 'pending', cohort = null, code = null, 
  */
 export function parseDecision(body, { actions = ['postpone', 'dismiss'] } = {}) {
   const b = body && typeof body === 'object' ? body : {};
-  if (!actions.includes(b.action)) return { error: `action debe ser ${actions.join(' o ')}.` };
+  if (!actions.includes(b.action)) return { error: `action debe ser una de: ${actions.join(', ')}.` };
   const ids = Array.isArray(b.ids) ? [...new Set(b.ids)] : [];
   if (ids.length === 0 || ids.some((id) => !Number.isInteger(id) || id <= 0)) {
     return { error: 'Indica las alertas a decidir (ids).' };

@@ -3,7 +3,9 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { apiRequest, formatDateTime, formatDay, formatRelative } from '../../../lib/api';
-import { ALERT_INFO, INBOX_STATUS, alertText, currentStepLabel } from './adminLabels';
+import { ALERT_INFO, EMAIL_STATUS, INBOX_STATUS, alertText, currentStepLabel } from './adminLabels';
+import ReinforcementPreviewModal from './ReinforcementPreviewModal';
+import ReinforcementTemplatesModal from './ReinforcementTemplatesModal';
 
 const PAGE_SIZE = 50;
 const VIEWS = [
@@ -12,6 +14,16 @@ const VIEWS = [
   { key: 'history', label: 'Historial' },
 ];
 const DEFAULT_POSTPONE_DAYS = [1, 3, 7, 14, 30];
+const DECISION_TITLES = {
+  send: (n) => `Enviar el correo de refuerzo de ${n} alerta(s)`,
+  postpone: (n) => `Posponer ${n} alerta(s)`,
+  dismiss: (n) => `Descartar ${n} alerta(s)`,
+};
+const NOTE_PLACEHOLDERS = {
+  send: 'Nota interna (opcional): queda en el historial, no va en el correo',
+  postpone: 'Nota (opcional): por qué esperar',
+  dismiss: 'Nota (opcional): por qué no hace falta actuar',
+};
 
 function AlertCell({ entry }) {
   const info = ALERT_INFO[entry.code];
@@ -35,14 +47,12 @@ function StudentCell({ entry }) {
   );
 }
 
-/** Posponer o descartar las alertas elegidas, con una nota opcional. */
-function DecisionPanel({ decision, postponeDays, busy, onChange, onConfirm, onCancel }) {
-  const count = decision.ids.length;
-  const isPostpone = decision.action === 'postpone';
+/** Enviar, posponer o descartar las alertas elegidas, con una nota opcional. */
+function DecisionPanel({ decision, postponeDays, rules, busy, onChange, onConfirm, onCancel }) {
   return (
     <div className="card p-12 mb-12 flex items-center gap-8 flex-wrap text-xs border-amber" id="alert-decision" data-action={decision.action}>
-      <strong>{isPostpone ? `Posponer ${count} alerta(s)` : `Descartar ${count} alerta(s)`}</strong>
-      {isPostpone && (
+      <strong>{DECISION_TITLES[decision.action](decision.ids.length)}</strong>
+      {decision.action === 'postpone' && (
         <label className="flex items-center gap-4">
           por
           <select
@@ -57,16 +67,22 @@ function DecisionPanel({ decision, postponeDays, busy, onChange, onConfirm, onCa
           </select>
         </label>
       )}
+      {decision.action === 'send' && (
+        <span className="text-muted">
+          Cada estudiante recibe el correo de su tipo de alerta. Se omite a quien recibió un refuerzo hace menos
+          de {rules?.minHoursBetween ?? 24} h o ya tiene {rules?.maxPerWeek ?? 2} esta semana.
+        </span>
+      )}
       <input
         id="alert-decision-note"
         className="input text-xs flex-1"
         maxLength={500}
-        placeholder={isPostpone ? 'Nota (opcional): por qué esperar' : 'Nota (opcional): por qué no hace falta actuar'}
+        placeholder={NOTE_PLACEHOLDERS[decision.action]}
         value={decision.note}
         onChange={(e) => onChange({ note: e.target.value })}
       />
       <button className="btn btn-primary text-xs" id="btn-alert-decision-confirm" disabled={busy} onClick={onConfirm}>
-        {busy ? 'Guardando...' : 'Confirmar'}
+        {busy ? 'Guardando...' : decision.action === 'send' ? '✉️ Enviar' : 'Confirmar'}
       </button>
       <button className="btn btn-secondary text-xs" id="btn-alert-decision-cancel" disabled={busy} onClick={onCancel}>
         Cancelar
@@ -75,11 +91,24 @@ function DecisionPanel({ decision, postponeDays, busy, onChange, onConfirm, onCa
   );
 }
 
+/** «3 correos de refuerzo en cola», «2 alertas pospuestas 7 días»… y, si alguna no se pudo, el motivo. */
+function decisionNotice(decision, results) {
+  const done = results.filter((r) => r.ok).length;
+  const what = decision.action === 'send'
+    ? `${done} correo(s) de refuerzo en cola`
+    : decision.action === 'postpone'
+      ? `${done} alerta(s) pospuesta(s) ${decision.days === 1 ? '1 día' : `${decision.days} días`}`
+      : `${done} alerta(s) descartada(s)`;
+  const reasons = [...new Set(results.filter((r) => !r.ok).map((r) => r.error))];
+  const skipped = results.length - done;
+  return skipped > 0 ? `${what}. ${skipped} sin cambios: ${reasons.join(' ')}` : `${what}.`;
+}
+
 /**
  * Bandeja de alertas (GET /api/admin/alerts): las alertas del seguimiento esperan una decisión del
- * admin. Se pueden posponer o descartar una por una o en grupo; el historial guarda quién decidió,
- * cuándo y con qué nota. Usa los filtros del panel (promoción y búsqueda) y avisa al panel cuántas
- * quedan pendientes en total.
+ * admin. Se puede enviar el correo de refuerzo (con vista previa), posponer o descartar, una por una
+ * o en grupo; el historial guarda quién decidió, cuándo y con qué nota. Usa los filtros del panel
+ * (promoción y búsqueda) y avisa al panel cuántas quedan pendientes en total.
  */
 export default function AlertInboxView({ cohort, search, onPendingChange }) {
   const [view, setView] = useState('pending');
@@ -89,6 +118,8 @@ export default function AlertInboxView({ cohort, search, onPendingChange }) {
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const [previewId, setPreviewId] = useState(null);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
 
   // La página vuelve a 1 al cambiar los filtros; la selección y la decisión abierta se descartan
   // al cambiar lo que se lista (sin setState dentro de un efecto).
@@ -138,6 +169,7 @@ export default function AlertInboxView({ cohort, search, onPendingChange }) {
     setNotice(null);
     setDecisionState({ key: listKey, action, ids, days: 3, note: '' });
   };
+  const reload = () => setReloadKey((k) => k + 1);
 
   const confirmDecision = async () => {
     setBusy(true);
@@ -145,19 +177,20 @@ export default function AlertInboxView({ cohort, search, onPendingChange }) {
     if (decision.action === 'postpone') body.days = decision.days;
     const res = await apiRequest('/admin/alerts/decide', { method: 'POST', body });
     setBusy(false);
-    if (!res.ok && !res.data?.results) {
+    const results = res.data?.results;
+    if (!results) {
       setError(res.error);
       return;
     }
-    const done = res.data?.done ?? 0;
-    const skipped = (res.data?.results || []).length - done;
-    const what = decision.action === 'postpone'
-      ? `${done} alerta(s) pospuesta(s) ${decision.days === 1 ? '1 día' : `${decision.days} días`}`
-      : `${done} alerta(s) descartada(s)`;
-    setNotice(skipped > 0 ? `${what}; ${skipped} ya no estaban abiertas.` : `${what}.`);
-    setError(null);
+    if (res.ok) {
+      setNotice(decisionNotice(decision, results));
+      setError(null);
+    } else {
+      setNotice(null);
+      setError(res.error);
+    }
     setDecisionState(null);
-    setReloadKey((k) => k + 1);
+    reload();
   };
 
   return (
@@ -167,16 +200,22 @@ export default function AlertInboxView({ cohort, search, onPendingChange }) {
           <h2 className="title-sm m-0 text-cyan">Bandeja de alertas{cohort && cohort !== 'all' ? ` — ${cohort}` : ''}</h2>
           <div className="text-xs text-secondary mt-4">
             Las alertas del seguimiento esperan tu decisión: nada se le envía solo al estudiante. Si una alerta deja de
-            cumplirse, se cierra sola; una que ya decidiste no vuelve antes de {rules?.cooldownDays ?? 7} días.
+            cumplirse, se cierra sola; una que ya decidiste no vuelve antes de {rules?.cooldownDays ?? 7} días. Cada estudiante
+            recibe como máximo un refuerzo cada {rules?.minHoursBetween ?? 24} h y {rules?.maxPerWeek ?? 2} por semana.
           </div>
         </div>
-        <select className="input text-xs" id="alert-filter-code" value={code} onChange={(e) => setCode(e.target.value)}
-          aria-label="Tipo de alerta">
-          <option value="">Todas las alertas</option>
-          {Object.entries(ALERT_INFO).map(([key, info]) => (
-            <option key={key} value={key}>{info.icon} {info.name}</option>
-          ))}
-        </select>
+        <div className="flex items-center gap-8 flex-wrap">
+          <button className="btn btn-secondary text-xs" id="btn-reinforcement-templates" onClick={() => setTemplatesOpen(true)}>
+            ✏️ Plantillas de correo
+          </button>
+          <select className="input text-xs" id="alert-filter-code" value={code} onChange={(e) => setCode(e.target.value)}
+            aria-label="Tipo de alerta">
+            <option value="">Todas las alertas</option>
+            {Object.entries(ALERT_INFO).map(([key, info]) => (
+              <option key={key} value={key}>{info.icon} {info.name}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <div className="view-tabs mb-12" role="tablist" aria-label="Estado de las alertas">
@@ -198,12 +237,15 @@ export default function AlertInboxView({ cohort, search, onPendingChange }) {
         ))}
       </div>
 
-      {error && <div className="text-red text-xs mb-8">{error}</div>}
+      {error && <div className="text-red text-xs mb-8" id="alert-inbox-error">{error}</div>}
       {notice && <div className="text-green text-xs mb-8" id="alert-inbox-notice">{notice}</div>}
 
       {decidable && selectedIds.length > 0 && !decision && (
         <div className="flex items-center gap-8 flex-wrap mb-12 text-xs" id="alerts-bulk-bar">
           <strong>{selectedIds.length} seleccionada(s)</strong>
+          <button className="btn btn-primary text-xs" id="btn-alerts-bulk-send" onClick={() => openDecision('send', selectedIds)}>
+            ✉️ Enviar refuerzo
+          </button>
           <button className="btn btn-secondary text-xs" id="btn-alerts-bulk-postpone" onClick={() => openDecision('postpone', selectedIds)}>
             ⏸ Posponer
           </button>
@@ -216,6 +258,7 @@ export default function AlertInboxView({ cohort, search, onPendingChange }) {
         <DecisionPanel
           decision={decision}
           postponeDays={postponeDays}
+          rules={rules}
           busy={busy}
           onChange={(changes) => setDecisionState({ ...decision, ...changes })}
           onConfirm={confirmDecision}
@@ -240,7 +283,14 @@ export default function AlertInboxView({ cohort, search, onPendingChange }) {
                   <tr key={e.id} data-alert-id={e.id} data-alert-code={e.code} data-status={e.status} data-student-email={e.student.email}>
                     <StudentCell entry={e} />
                     <AlertCell entry={e} />
-                    <td><span className={status.className}>{status.label}</span></td>
+                    <td>
+                      <span className={status.className}>{status.label}</span>
+                      {e.status === 'sent' && e.emailStatus && (
+                        <div className="text-muted mt-4" data-email-status={e.emailStatus}>
+                          Correo: {EMAIL_STATUS[e.emailStatus]?.label || e.emailStatus}
+                        </div>
+                      )}
+                    </td>
                     <td style={{ whiteSpace: 'nowrap' }} title={formatDateTime(when)}>{formatRelative(when)}</td>
                     <td>
                       {e.status === 'resolved'
@@ -294,6 +344,8 @@ export default function AlertInboxView({ cohort, search, onPendingChange }) {
                       : <span className="text-muted">—</span>}
                   </td>
                   <td style={{ whiteSpace: 'nowrap' }}>
+                    <button className="btn btn-primary text-xs px-8 py-4" id={`btn-alert-send-${e.id}`}
+                      onClick={() => { setNotice(null); setPreviewId(e.id); }}>✉️ Enviar</button>{' '}
                     <button className="btn btn-secondary text-xs px-8 py-4" id={`btn-alert-postpone-${e.id}`}
                       onClick={() => openDecision('postpone', [e.id])}>⏸ Posponer</button>{' '}
                     <button className="btn btn-secondary text-xs px-8 py-4" id={`btn-alert-dismiss-${e.id}`}
@@ -322,6 +374,20 @@ export default function AlertInboxView({ cohort, search, onPendingChange }) {
             onClick={() => setPageState({ key: filterKey, page: page + 1 })}>Siguiente →</button>
         </div>
       )}
+
+      {previewId !== null && (
+        <ReinforcementPreviewModal
+          entryId={previewId}
+          onClose={() => setPreviewId(null)}
+          onSent={(sent) => {
+            setPreviewId(null);
+            setError(null);
+            setNotice(`Correo de refuerzo en cola para ${sent.to}.`);
+            reload();
+          }}
+        />
+      )}
+      {templatesOpen && <ReinforcementTemplatesModal onClose={() => setTemplatesOpen(false)} />}
     </div>
   );
 }
