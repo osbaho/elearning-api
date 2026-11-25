@@ -62,7 +62,7 @@ function StepRow({ step }) {
       <td>{tier ? <span className={tier.className}>{tier.label}{step.bestPercent !== null ? ` · ${step.bestPercent} %` : ''}</span> : <span className="text-muted">—</span>}</td>
       {step.attempts > 0 ? (
         <>
-          <td>{step.attempts} partida(s)</td>
+          <td>{step.attempts} partida(s){step.practiceAttempts > 0 ? ` · ${step.practiceAttempts} de práctica libre` : ''}</td>
           <td className="text-amber font-bold">{step.points} pts</td>
         </>
       ) : (

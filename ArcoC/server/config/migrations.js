@@ -405,4 +405,13 @@ export const MIGRATIONS = [
       await db.addColumnIfMissing('video_views', 'position_updated_at', 'TEXT');
     },
   },
+  {
+    version: 11,
+    name: 'practica_libre',
+    // Fase 6: con el minijuego ya finalizado, el estudiante puede seguir practicando sin puntos.
+    // Esas partidas se guardan con practice = 1 y no cuentan para puntos, nivel ni seguimiento.
+    async up(db) {
+      await db.addColumnIfMissing('simulator_attempts', 'practice', 'INTEGER DEFAULT 0');
+    },
+  },
 ];

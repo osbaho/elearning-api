@@ -211,7 +211,7 @@ ArcoC/
     │   ├── loginHelper.js         # Utilidad de login y reset para tests
     │   ├── simulatorHelper.js     # Partidas del simulador y avance de pasos vía API
     │   └── adminHelper.js         # Sesión de admin en contexto propio, promociones y matrículas vía API
-    └── e2e/                       # 38 suites Playwright (ver sección 13)
+    └── e2e/                       # 39 suites Playwright (ver sección 13)
 ```
 
 En la raíz del monorepo, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) corre el lint del cliente y la suite E2E sobre SQLite y PostgreSQL (ver sección 13).
@@ -354,6 +354,9 @@ Historial de intentos del examen, una fila por intento:
 #### 12. `support_cases` (migración 5)
 Casos de «Reportar un problema» (sección 10.13): `student_id`, `step_id` (paso de la malla, `exam` o vacío), `category` (`video` | `minigame` | `exam` | `account` | `other`), `description`, `context` (JSON con URL, navegador y tamaño de ventana), `status` (`open` | `resolved` | `rejected`), `created_at`, `resolved_at`, `resolved_by_admin_id` y `resolution` (la respuesta que recibe el estudiante).
 
+#### Columna agregada por la migración 11
+* `simulator_attempts.practice` (0 por defecto): partida de práctica libre, jugada con el minijuego ya finalizado. No suma puntos y no cuenta para finalizar, para el tope ni para el seguimiento (sección 6).
+
 #### Columnas agregadas por la migración 10
 * `video_views`: `last_position_seconds`, `max_watched_seconds` y `position_updated_at`, para retomar cada video donde quedó el estudiante (sección 5).
 
@@ -486,8 +489,8 @@ Otros mensajes del simulador: `ready` (Unity cargó) y `load-error`. Endpoints (
 
 | Endpoint | Descripción |
 | :--- | :--- |
-| `GET /api/simulator/steps/:stepId` | Estado del minijuego: escena y fase, partidas terminadas, puntos ganados y su tope (`maxPoints`). Campos de disponibilidad: `available` (la escena está en el build y se juega en Unity), `inDevelopment` (pendiente) y `canSimulate` (la API admite partidas: siempre fuera de producción, y en producción solo si está listo). Un paso inexistente responde `404`. |
-| `POST /api/simulator/attempts` | Crea una partida. Exige el paso previo completado (403). Responde 404 si el paso no es un minijuego de la malla y 409 si ya fue finalizado o si es un minijuego pendiente en producción. |
+| `GET /api/simulator/steps/:stepId` | Estado del minijuego: escena y fase, partidas terminadas, puntos ganados y su tope (`maxPoints`). Campos de disponibilidad: `available` (la escena está en el build y se juega en Unity), `inDevelopment` (pendiente) y `canSimulate` (la API admite partidas: siempre fuera de producción, y en producción solo si está listo). Un paso inexistente responde `404`. También informa `practiceAttempts`, las partidas de práctica libre, que no entran en las partidas ni en los puntos. |
+| `POST /api/simulator/attempts` | Crea una partida. Exige el paso previo completado (403). Responde 404 si el paso no es un minijuego de la malla y 409 si ya fue finalizado o si es un minijuego pendiente en producción. Con `practice: true` crea una partida de práctica libre, que solo se admite con el minijuego ya finalizado (409 si no lo está). |
 | `POST /api/simulator/attempts/:id/result` | Registra el resultado de la fase y otorga los puntos. Acepta el detalle de errores opcional `errors` (ver «Detalle de Errores de la Partida»). Responde `{ tier, pointsAwarded, reservePoints, stepPointsEarned, stepPointsMax, stepCapReached }`. |
 
 ### Detalle de Errores de la Partida ([`server/services/simulatorErrors.js`](server/services/simulatorErrors.js))
@@ -526,7 +529,8 @@ El 70 % es el mismo `passScorePercent` de las `MinigameConfig` de Unity. "Perfec
 4. **Idempotencia:** reenviar el resultado de una partida devuelve el mismo registro con `duplicate: true` y no suma puntos.
 5. **Correlación:** la fase reportada debe coincidir con la del intento (422) y el intento debe pertenecer al estudiante (404).
 6. **Plausibilidad de tiempo:** el tiempo de juego reportado no puede superar el tiempo real transcurrido desde que el servidor creó el intento (+5 s de margen; 422).
-7. **Sin puntos tras finalizar:** si el minijuego ya fue finalizado no se crean partidas ni se aceptan resultados (409).
+7. **Sin puntos tras finalizar:** si el minijuego ya fue finalizado no se crean partidas normales ni se aceptan sus resultados (409).
+   **Práctica libre** (Fase 6): con el minijuego finalizado, la página ofrece **🔁 Practicar sin puntos**. Esas partidas (`practice: true`, migración 11) se juegan igual en Unity y se registran con su nivel, pero no suman Puntos de Reserva ni tocan el tope. Tampoco cuentan para finalizar, para el mejor nivel, para las alertas ni para el seguimiento, y van a `exam_logs` como `SIM_PRACTICE`. La ficha del admin las lista con la marca «Práctica libre» y «Mi progreso» las cuenta aparte. Al reabrir el minijuego se anulan junto con las demás.
    Las partidas **anuladas** al reabrir un minijuego (sección 10.14) no cuentan para finalizarlo, para el tope por minijuego ni para las estadísticas. Un resultado para una partida anulada responde 409.
 8. **`/api/add-points` es solo de desarrollo y pruebas:** en producción responde 404. Exige `source` válido (paso práctico de la malla) y no completado.
 9. **Comunicación WebGL segura:** el build se sirve desde el mismo origen (`client/public/webgl`), Unity publica con `targetOrigin` = su propio origen y `SimulatorView` descarta mensajes que no vengan de su iframe. No hacen falta variables `NEXT_PUBLIC_SIMULATOR_*`.
@@ -851,7 +855,7 @@ Los umbrales están en `ALERT_RULES` (`progressTracking.js`).
 * **Avance por módulo:**
   * Cada video: si lo vio o lo empezó, con fecha.
   * Cada minijuego: si lo finalizó, su mejor nivel, partidas y puntos.
-  * **Ver partidas** muestra de cada partida el inicio, el estado, el puntaje, los errores, la dosis, el tiempo, el nivel y los puntos. Debajo de cada partida lista el detalle de errores que envió Unity: segundo, código y mensaje (sección 6).
+  * **Ver partidas** muestra de cada partida el inicio, el estado, el puntaje, los errores, la dosis, el tiempo, el nivel y los puntos. Debajo de cada partida lista el detalle de errores que envió Unity: segundo, código y mensaje (sección 6). Las de práctica libre llevan su marca y no entran en el resumen del minijuego.
 * **Examen:** historial de intentos (`exam_attempts`) con estado, nota y respuestas correctas, y el certificado si aprobó.
 * **Incidencias de supervisión** (`exam_logs`), **correos** (`email_logs`) y **acciones del admin** sobre el estudiante.
 * **Línea de tiempo:** todo lo anterior junto, de lo más reciente a lo más antiguo (hasta 300 eventos).
@@ -1239,10 +1243,10 @@ Microsoft 365 y Google Workspace restringen el SMTP con usuario y contraseña (e
 
 ## 13. Suite de Pruebas Automatizadas (Playwright)
 
-El proyecto cuenta con un conjunto integral de **150 pruebas E2E automatizadas** organizadas en **38 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
+El proyecto cuenta con un conjunto integral de **152 pruebas E2E automatizadas** organizadas en **39 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
 
 ```bash
-# Ejecutar todas las 38 suites E2E (150 pruebas) sobre la base de desarrollo (SQLite)
+# Ejecutar todas las 39 suites E2E (152 pruebas) sobre la base de desarrollo (SQLite)
 npx playwright test
 
 # La misma suite sobre un PostgreSQL 16 desechable (sin Docker; detén antes los servidores de desarrollo)
@@ -1336,6 +1340,7 @@ Las reglas que dependen del tiempo real (visualización mínima de videos y dura
 | **36** | **`36-student-fixes.test.js`** | **Correcciones del perfil del estudiante (Fase 6).** La ruta de cada cuadro de la supervisión (worker libre, worker ocupado, worker caído, sin worker y detección en curso). Toda clase del marcado tiene estilos, salvo los ganchos del recorrido guiado. En la práctica, el subtítulo queda alineado con el título. A 390 px, el encabezado del estudiante y del admin no se desborda y la página no se desplaza a lo ancho. Y un examen con la cámara simulada del navegador (sin `skipCamera`): la supervisión analiza cuadros («Rostro no detectado») sin errores del hilo principal en la consola. |
 | **37** | **`37-my-progress.test.js`** | **Mi progreso y preguntas frecuentes.** Reglas puras: el costo de cada comodín y el resumen del historial de puntos, ordenado y con el ajuste después de la partida dentro del mismo segundo. Por la API: avance (3/30), paso actual, mejor nivel, partidas y puntos de cada minijuego, historial de puntos y datos de la cuenta, sin lo que es solo del admin. Al reabrir el minijuego se descuentan sus puntos con el motivo y sus partidas quedan anuladas. Un comodín del examen aparece como gasto y los puntos iniciales como ajuste. El admin recibe 403 y sin sesión, 401. En el curso: la página muestra el resumen, los pasos, los movimientos de puntos, las reglas del examen y los datos, y «Solicitar una corrección» abre un reporte de cuenta. Las preguntas frecuentes usan las reglas vigentes del examen. |
 | **38** | **`38-video-resume.test.js`** | **Retomar videos.** Validación pura de la posición: redondeo, la posición cuenta como mínimo de lo visto y valores inválidos. Por la API: guarda la posición; hasta dónde llegó nunca baja al volver atrás; responde 400 para valores inválidos y pasos que no son videos, 403 para un video bloqueado, y el admin en revisión no guarda nada. En el curso: el video ofrece retomar en la posición guardada; moverse por lo ya visto se permite y más allá se bloquea; «Ver desde el inicio» quita el aviso. Abrir el curso sin reproducir no marca el video como empezado. |
+| **39** | **`39-free-practice.test.js`** | **Práctica libre.** Por la API: con el minijuego finalizado, una partida normal da 409 y la de práctica se crea. En un minijuego sin finalizar, la de práctica da 409. El resultado de práctica tiene nivel, pero 0 puntos y no toca el saldo; el estado del paso la informa aparte (`practiceAttempts`). El seguimiento y el resumen de la ficha no la cuentan, la ficha la lista con su marca, y «Mi progreso» la cuenta aparte, fuera del historial de puntos. En la práctica: «Practicar sin puntos» aparece con el minijuego finalizado, la partida se juega con la página que sustituye a Unity y el aviso dice que no suma. |
 
 ---
 

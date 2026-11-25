@@ -90,7 +90,13 @@ router.get('/steps/:stepId', authenticateToken, async (req, res) => {
     const stats = await get(
       `SELECT COUNT(*) AS completed_attempts, COALESCE(SUM(points_awarded), 0) AS points_earned
          FROM simulator_attempts
-        WHERE student_id = ? AND step_id = ? AND status = 'completed' AND voided_at IS NULL`,
+        WHERE student_id = ? AND step_id = ? AND status = 'completed' AND voided_at IS NULL
+          AND COALESCE(practice, 0) = 0`,
+      [studentId, stepId]
+    );
+    const practiceStats = await get(
+      `SELECT COUNT(*) AS n FROM simulator_attempts
+        WHERE student_id = ? AND step_id = ? AND status = 'completed' AND voided_at IS NULL AND COALESCE(practice, 0) = 1`,
       [studentId, stepId]
     );
     res.json({
@@ -107,6 +113,8 @@ router.get('/steps/:stepId', authenticateToken, async (req, res) => {
       phase: entry.phase,
       title: entry.title,
       completedAttempts: parseInt(stats?.completed_attempts || 0, 10),
+      // Partidas de práctica libre (con el minijuego ya finalizado; no suman puntos)
+      practiceAttempts: parseInt(practiceStats?.n || 0, 10),
       pointsEarned: Number(stats?.points_earned || 0),
       maxPoints: MAX_POINTS_PER_PRACTICE_STEP,
       stepCompleted: await isStepCompleted(studentId, stepId),
@@ -128,10 +136,16 @@ router.post('/attempts', authenticateToken, requireOpenAccess, async (req, res) 
     }
     const studentId = req.user.id;
     const preview = isPreviewUser(req);
+    // Práctica libre (Fase 6): con el minijuego finalizado se puede seguir jugando, sin puntos
+    const practice = !preview && req.body?.practice === true;
 
     // Modo revisión: el admin juega cualquier minijuego sin seguir el orden
-    if (!preview && await isStepCompleted(studentId, stepId)) {
-      return res.status(409).json({ error: 'Este minijuego ya fue finalizado. No se pueden iniciar más partidas.' });
+    const completed = !preview && await isStepCompleted(studentId, stepId);
+    if (practice && !completed) {
+      return res.status(409).json({ error: 'La práctica libre se habilita al finalizar el minijuego.' });
+    }
+    if (!practice && completed) {
+      return res.status(409).json({ error: 'Este minijuego ya fue finalizado. Puedes seguir en práctica libre, sin puntos.' });
     }
 
     const previous = previousStepOf(stepId);
@@ -143,12 +157,16 @@ router.post('/attempts', authenticateToken, requireOpenAccess, async (req, res) 
 
     const attemptId = crypto.randomUUID();
     await run(
-      `INSERT INTO simulator_attempts (id, student_id, step_id, scene, phase, status, started_at)
-       VALUES (?, ?, ?, ?, ?, 'started', ?)`,
-      [attemptId, studentId, stepId, entry.scene, entry.phase, new Date().toISOString()]
+      `INSERT INTO simulator_attempts (id, student_id, step_id, scene, phase, status, started_at, practice)
+       VALUES (?, ?, ?, ?, ?, 'started', ?, ?)`,
+      [attemptId, studentId, stepId, entry.scene, entry.phase, new Date().toISOString(), practice ? 1 : 0]
     );
 
-    res.status(201).json({ attemptId, stepId, scene: entry.scene, phase: entry.phase, ...(preview ? { preview: true } : {}) });
+    res.status(201).json({
+      attemptId, stepId, scene: entry.scene, phase: entry.phase,
+      ...(preview ? { preview: true } : {}),
+      ...(practice ? { practice: true } : {}),
+    });
   } catch (err) {
     console.error('Simulator attempt error:', err);
     res.status(500).json({ error: 'Error del servidor' });
@@ -198,7 +216,8 @@ router.post('/attempts/:attemptId/result', authenticateToken, requireOpenAccess,
       if (result.phase !== Number(attempt.phase)) {
         throw new HttpError(422, 'La fase reportada no corresponde a este intento.');
       }
-      if (!preview && await isStepCompleted(studentId, attempt.step_id, tx)) {
+      const practice = Boolean(Number(attempt.practice));
+      if (!preview && !practice && await isStepCompleted(studentId, attempt.step_id, tx)) {
         throw new HttpError(409, 'Este minijuego ya fue finalizado. El resultado no suma puntos.');
       }
       const elapsedSeconds = (Date.now() - Date.parse(attempt.started_at)) / 1000;
@@ -218,15 +237,16 @@ router.post('/attempts/:attemptId/result', authenticateToken, requireOpenAccess,
       // Tope por minijuego (siempre) y techo global de 500
       const earned = await tx.get(
         `SELECT COALESCE(SUM(points_awarded), 0) AS earned FROM simulator_attempts
-          WHERE student_id = ? AND step_id = ? AND status = 'completed' AND voided_at IS NULL`,
+          WHERE student_id = ? AND step_id = ? AND status = 'completed' AND voided_at IS NULL
+            AND COALESCE(practice, 0) = 0`,
         [studentId, attempt.step_id]
       );
       const earnedInStep = Number(earned?.earned || 0);
       const tierPoints = POINTS_BY_TIER[tier];
-      const pointsAwarded = preview
+      const pointsAwarded = preview || practice
         ? 0
         : clampToReserveCap(clampToStepCap(tierPoints, earnedInStep), student.reserve_points);
-      const stepCapReached = !preview && tierPoints > 0 && earnedInStep + tierPoints > MAX_POINTS_PER_PRACTICE_STEP;
+      const stepCapReached = !preview && !practice && tierPoints > 0 && earnedInStep + tierPoints > MAX_POINTS_PER_PRACTICE_STEP;
 
       if (pointsAwarded > 0) {
         await tx.run('UPDATE students SET reserve_points = reserve_points + ? WHERE id = ?', [pointsAwarded, studentId]);
@@ -247,8 +267,8 @@ router.post('/attempts/:attemptId/result', authenticateToken, requireOpenAccess,
           'INSERT INTO exam_logs (student_id, event_type, detail) VALUES (?, ?, ?)',
           [
             studentId,
-            'SIM_RESULT',
-            `${attempt.step_id} fase ${attempt.phase}: ${tier} +${pointsAwarded} pts ` +
+            practice ? 'SIM_PRACTICE' : 'SIM_RESULT',
+            `${attempt.step_id} fase ${attempt.phase}${practice ? ' (práctica libre)' : ''}: ${tier} +${pointsAwarded} pts ` +
               `(score ${result.score}/${result.maxScore}, errores ${result.errorCount}, ${result.timeSeconds.toFixed(1)} s)`,
           ]
         );
@@ -267,6 +287,7 @@ router.post('/attempts/:attemptId/result', authenticateToken, requireOpenAccess,
         stepCapReached,
         duplicate: false,
         ...(preview ? { preview: true } : {}),
+        ...(practice ? { practice: true } : {}),
       };
     });
 
