@@ -41,6 +41,17 @@ export const ACTION_LABELS = {
   'case.resolve': 'Resolvió un reporte del estudiante',
   'case.reject': 'Cerró sin cambios un reporte del estudiante',
   'student.reopen': 'Reabrió un paso del curso (reintento autorizado)',
+  'alert.postpone': 'Pospuso una alerta del seguimiento',
+  'alert.dismiss': 'Descartó una alerta del seguimiento',
+};
+
+/** Estados de la bandeja de alertas (services/alertInbox.js). */
+export const INBOX_STATUS = {
+  pending: { label: 'Pendiente', className: 'email-status queued' },
+  postponed: { label: 'Pospuesta', className: 'email-status simulated' },
+  sent: { label: 'Correo enviado', className: 'email-status sent' },
+  dismissed: { label: 'Descartada', className: 'email-status simulated' },
+  resolved: { label: 'Se cerró sola', className: 'email-status sent' },
 };
 
 export const EMAIL_STATUS = {

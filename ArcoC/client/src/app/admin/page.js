@@ -13,6 +13,7 @@ import ImportStudentsModal from './_components/ImportStudentsModal';
 import AdminActionsModal from './_components/AdminActionsModal';
 import LaunchReadinessCard from './_components/LaunchReadinessCard';
 import ProgressTrackingView from './_components/ProgressTrackingView';
+import AlertInboxView from './_components/AlertInboxView';
 import SupportCasesButton from './_components/SupportCasesButton';
 import { EMAIL_STATUS, accountStatus } from './_components/adminLabels';
 
@@ -68,6 +69,8 @@ export default function AdminPage() {
   const [isActionsOpen, setIsActionsOpen] = useState(false);
   // 'audit' = tabla oficial de auditoría IES; 'tracking' = seguimiento del avance por promoción
   const [view, setView] = useState('audit');
+  // Alertas pendientes en la bandeja (contador de la pestaña)
+  const [alertsPending, setAlertsPending] = useState(null);
   const [manageStudentId, setManageStudentId] = useState(null);
 
   // Modal de Verificación de Estándar IES
@@ -133,6 +136,16 @@ export default function AdminPage() {
     }
     fetchCohortsAndStudents(selectedCohort, searchQuery, statusFilter);
   }, [user, authLoading, router, selectedCohort, searchQuery, statusFilter, fetchCohortsAndStudents]);
+
+  // Contador de la pestaña de alertas (abrir el panel revisa la bandeja)
+  useEffect(() => {
+    if (authLoading || user?.role !== 'admin') return;
+    let cancelled = false;
+    apiRequest('/admin/alerts/summary').then((res) => {
+      if (!cancelled && res.ok) setAlertsPending(res.data.pending);
+    });
+    return () => { cancelled = true; };
+  }, [user, authLoading]);
 
   const reloadPanel = () => fetchCohortsAndStudents(selectedCohort, searchQuery, statusFilter);
 
@@ -699,10 +712,24 @@ export default function AdminPage() {
         >
           📈 Seguimiento del avance
         </button>
+        <button
+          role="tab"
+          id="tab-view-alerts"
+          aria-selected={view === 'alerts'}
+          className={`view-tab ${view === 'alerts' ? 'active' : ''}`}
+          onClick={() => setView('alerts')}
+        >
+          🔔 Alertas
+          {alertsPending > 0 && <span className="count-badge ml-8" id="alerts-pending-count">{alertsPending}</span>}
+        </button>
       </div>
 
       {view === 'tracking' && (
         <ProgressTrackingView cohort={selectedCohort} search={searchQuery} status={statusFilter} />
+      )}
+
+      {view === 'alerts' && (
+        <AlertInboxView cohort={selectedCohort} search={searchQuery} onPendingChange={setAlertsPending} />
       )}
 
       {/* Main Student Table */}
