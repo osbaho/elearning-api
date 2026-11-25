@@ -6,7 +6,8 @@ namespace CArmSimulator.Web
     /// <summary>
     /// Carga la escena del módulo que pide la plataforma (parámetro scene= de la URL).
     /// Con un único build para todos los módulos, cada módulo del curso es una escena
-    /// (Scene1 = módulo 1; las siguientes se registran en el catálogo de la API).
+    /// con nombre estándar ModuloNN (Modulo01 = módulo 1, Modulo02 = módulo 2…), el mismo que usa el
+    /// catálogo de la API.
     /// Si la escena pedida ya es la activa, no hace nada.
     /// </summary>
     public static class WebSceneRouter

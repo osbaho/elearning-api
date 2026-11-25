@@ -1,198 +1,242 @@
-# GUIONES DE PRODUCCIÓN - MÓDULO 5: MIEMBRO SUPERIOR, COLUMNA Y CASOS ESPECIALES
+# GUIONES DE PRODUCCIÓN HEYGEN VIDEO AGENT — MÓDULO 5: MIEMBRO SUPERIOR, COLUMNA Y CIERRE DEL CURSO
 
-**SISTEMA DE PRODUCCIÓN IA (Runway Gen-3 / Kling / Sora + ElevenLabs / HeyGen):**
-* **Personaje Principal:** **Dra. Nova**. Ataviada con bata médica plomada, postura dinámica de máxima concentración quirúrgica, elegancia y liderazgo en alta especialidad neuroquirúrgica y ortopédica.
-* **Estética Visual:** Quirófano de microcirugía de mano y neurocirugía de columna hiperrealista oscuro. Proyecciones holográficas de huesos del carpo, radio distal con placa volar y columna vertebral 3D con tornillos transpediculares.
-* **Guía de Dirección de Voz:** Alerta severa ante el peligro del Mini C-arm; rigor milimétrico en columna y tornillos pediculares; máxima solemnidad al enseñar la maniobra de giro de cabeza a 90° (Lee 2012); e inspiración triunfal en la despedida y examen final.
-
----
-
-# VIDEO 1: Húmero Proximal, Radio Distal y Alerta Crítica en Mini C-Arm
-* **Duración:** 2:50 minutos  
-* **Objetivo:** Enseñar el posicionamiento en hombro/húmero (AO Estación 1), control de placa volar de radio distal (DRUJ y tendón EPL - AO Estación 2), y alertar sobre el incremento x10 de dosis a manos en Mini C-arm (Vosbikian 2014).
+> **Configuración Global para HeyGen Video Agent:**
+> * **Formato y relación de aspecto:** `16:9` horizontal (Full HD 1080p).
+> * **Presentadora única (A-Roll):** **Dra. Nova** (*Custom Avatar* ya configurado en HeyGen), narrando y demostrando en solitario para máxima estabilidad en una sola generación.
+> * **Público objetivo:** Todo el personal de quirófano (instrumentadores quirúrgicos, auxiliares de enfermería, tecnólogos en radiología, residentes y cirujanos ortopédicos). Claridad total en maniobras prácticas y alertas de bioseguridad.
+> * **Regla de siglas en inglés:** Toda sigla o expresión en inglés se desarrolla primero en inglés y se explica enseguida en español antes de continuar.
+> * **Visuales (B-Roll y Gráficos):** Imágenes y clips de archivo **libres de derechos de autor** (quirófano ortopédico, cirugía de mano/hombro/columna) junto a animaciones limpias 2D/3D y *lower-thirds* en español. Paleta institucional: azul marino oscuro, cian médico, acentos ámbar/rojo para alertas y dorado para el cierre final.
+> * **Duración objetivo:** ~3:15 a 3:25 minutos por video (~465–505 palabras de locución).
 
 ---
 
-### ESCENA 1: La Geometría Fina del Miembro Superior (0:00 - 0:35)
-* **Prompt Visual Generativo:**  
-  `Medium shot, surgeon in lead apron standing beside an arm surgical hand table, holographic upper extremity shining from shoulder to hand, dark surgical theater with elegant violet and cyan rim light.`
-* **Acción y Expresión:**  
-  Dra. Nova extiende el brazo simulando la postura quirúrgica de extremidad superior, transmitiendo elegancia anatómica.
-* **Elementos en Pantalla (HUD):**  
-  Modelo 3D de miembro superior completo: Hombro, húmero diafisario, radio distal y carpo.
-* **DIÁLOGO & DIRECCIÓN DE VOZ:**
-  > **Dra. Nova:** *[Emoción: Bienvenida de élite y refinamiento quirúrgico | Tono: Inspirador y pausado | Ritmo: Fluido]*  
-  > "Bienvenidos al quinto y último módulo de nuestro curso. Hemos llegado al territorio de mayor movilidad y refinamiento geométrico del cuerpo humano: el miembro superior y la columna vertebral. Aquí el reto no es el grosor tisular, sino la precisión milimétrica en espacios anatómicos reducidos."
+## Mapa del Módulo 5 (3 Videos + 3 Minijuegos)
+
+| Paso | Tipo | Título | Duración aprox. | Minijuego vinculado / Mecánica clave |
+| :--- | :--- | :--- | :--- | :--- |
+| `m5_v1` | Video 1 | Hombro, Húmero y Codo: Posicionar al Paciente sin Chocar | 3:15 min | Prepara para `m5_s1` (**Hombro y Codo Ortogonal**) |
+| `m5_s1` | Minijuego 1 | Hombro y Codo Ortogonal (`M05_MG1_ShoulderElbowViews`) | — | Silla de playa, AP de Grashey, calcar y codo flexionado a 90° |
+| `m5_v2` | Video 2 | Radio Distal, Escafoides y la Trampa del Mini C-Arm | 3:20 min | Prepara para `m5_s2` (**Muñeca y Manos Fuera del Haz**) |
+| `m5_s2` | Minijuego 2 | Muñeca y Manos Fuera del Haz (`M05_MG2_WristMiniCArmSafety`) | — | Oblicuas DRUJ/EPL, escafoides, Mini C-Arm y pinzas largas |
+| `m5_v3` | Video 3 | Columna Vertebral, Paralelaje, Dosimetría Espinal y Cierre | 3:25 min | Prepara para `m5_s3` (**Desafío Espinal 3D**) + Examen Final |
+| `m5_s3` | Minijuego 3 | Desafío Espinal 3D (`M05_MG3_SpineParallax3D`) | — | Paralelaje central, giro cefálico 90° y control 3D de pedículos |
 
 ---
 
-### ESCENA 2: Húmero Proximal y Tornillos Calcar (AO Estación 1) (0:35 - 1:20)
-* **Prompt Visual Generativo:**  
-  `Holographic patient in beach chair position for shoulder surgery. C-arm approaches perpendicular to scapula. Dual view displays True AP (Grashey) and Scapular Y-view. Proximal humeral nail and calcar screws securing humeral head without penetrating glenohumeral joint.`
-* **Acción y Expresión:**  
-  Simula la rotación interna y externa del hombro, señalando la cabeza humeral con precisión quirúrgica.
-* **Elementos en Pantalla (HUD):**  
-  AO Trauma (Estación 1): Paciente en silla de playa // Proyecciones AP verdadera (Grashey) y en 'Y' de escápula // Control de tornillos inferomediales del calcar sin penetración articular.
-* **DIÁLOGO & DIRECCIÓN DE VOZ:**
-  > **Dra. Nova:** *[Emoción: Rigor técnico y concentración | Tono: Didáctico y seguro | Ritmo: Marcado]*  
-  > "En fracturas de húmero proximal, según la Estación 1 de AO Trauma, el paciente se ubica en posición de silla de playa. Para guiar el enclavado anterógrado o una placa bloqueada, la proyección Anteroposterior verdadera de Grashey y la vista en 'Y' de escápula son vitales. Debemos verificar bajo fluoroscopía dinámica que los tornillos del calcar inferomedial sustenten la cabeza humeral sin perforar jamás el espacio articular glenohumeral."
+# VIDEO 1 (`m5_v1`): Hombro, Húmero y Codo: Posicionar al Paciente sin Chocar
+* **Archivo destino:** `M05_V01_Hombro_Codo.mp4`
+* **Duración estimada:** ~3:15 minutos (~470 palabras)
+* **Objetivo pedagógico:** Explicar el reto dosimétrico cercano al tórax, el montaje en silla de playa (*Beach Chair*) con proyección AP verdadera de Grashey y vista en "Y" escapular para controlar tornillos calcar en húmero proximal (AO Estación 1), y la maniobra ortodoxa de flexionar el codo a 90° en mesa auxiliar en lugar de rotar la máquina.
+* **Siglas y términos en inglés explicados:** `Beach Chair`, `True AP`.
+
+## Prompt Maestro Listo para Copiar y Pegar en HeyGen Video Agent
+
+```text
+INSTRUCCIONES PARA HEYGEN VIDEO AGENT:
+Crea un video educativo médico completo en español, en formato horizontal 16:9, de aproximadamente 3 minutos y 15 segundos.
+Presentadora única: usa mi Custom Avatar "Dra. Nova" en planos medios con tono elegante, técnico pero muy accesible para instrumentadores quirúrgicos, auxiliares de enfermería, tecnólogos y cirujanos.
+Estilo visual: quirófano ortopédico moderno en tonos azul oscuro y cian. Alterna a la Dra. Nova con clips de archivo libres de copyright de cirugía ortopédica y animaciones anatómicas 3D limpias de hombro (silla de playa, escápula, húmero proximal) y codo sobre mesa auxiliar radiolúcida, con textos breves en español.
+REGLA CRÍTICA DE LOCUCIÓN: Lee únicamente el texto que aparece dentro de "Locución exacta" en cada escena. No leas en voz alta títulos, indicaciones visuales ni textos en pantalla. Respeta pausas breves donde aparezcan puntos suspensivos (...).
 
 ---
 
-### ESCENA 3: Radio Distal, DRUJ y el Tendón EPL (AO Estación 2) (1:20 - 2:05)
-* **Prompt Visual Generativo:**  
-  `Extreme close-up on wrist volar plate fixation. Tilting fluoroscopic views at 20-30 degrees pronation/supination. Left graphic highlights Distal Radioulnar Joint (DRUJ). Right graphic highlights Lister's tubercle with Extensor Pollicis Longus (EPL) tendon crossing over protruding dorsal screw.`
-* **Acción y Expresión:**  
-  Realiza una pronosupinación de muñeca demostrando las vistas oblicuas tangenciales. Tono de advertencia clínica.
-* **Elementos en Pantalla (HUD):**  
-  AO Trauma (Estación 2):  
-  1. Descartar penetración de tornillos en la fosa sigmoidea / DRUJ (oblicua a 20° de pronación).  
-  2. Descartar tornillos bicorticales largos sobresaliendo dorsalmente en la corredera del tendón EPL (oblicua a 30°).
-* **DIÁLOGO & DIRECCIÓN DE VOZ:**
-  > **Dra. Nova:** *[Emoción: Precisión de microcirugía y alerta de complicaciones | Tono: Enérgico e incisivo | Ritmo: Detallado]*  
-  > "En radio distal (Estación 2 de AO Trauma), una placa volar mal controlada puede causar desastres funcionales. Requerimos vistas laterales puras y oblicuas de pronosupinación a 20 y 30 grados para descartar dos errores críticos: tornillos que invadan la articulación radiocubital distal (DRUJ), o tornillos bicorticales demasiado largos que sobresalgan dorsalmente por el tubérculo de Lister, friccionando y rompiendo tardíamente el tendón Extensor Largo del Pulgar."
+ESCENA 1 — El reto del miembro superior y la cercanía al tórax
+Visual: Plano medio de Dra. Nova, pasando a una vista esquemática limpia del brazo y hombro junto al torso, mostrando cómo al acercarse al pecho sube la potencia del equipo y la dispersión hacia cara y cuello.
+Texto en pantalla: "MÓDULO 5 · VIDEO 1: HOMBRO, HÚMERO Y CODO | Alta movilidad y proximidad al tórax"
+Locución exacta:
+"Bienvenidos al quinto y último módulo del programa. Subimos ahora al miembro superior y a la columna vertebral. A diferencia del fémur, aquí los huesos son más delgados y la articulación se mueve con mucha facilidad... pero existe un reto importante. Cuando operamos el hombro o el húmero cerca del pecho, el grosor del tórax obliga al Arco en C a elevar su potencia y genera fuerte radiación dispersa hacia la cara y la tiroides del equipo. Por eso el orden en la mesa es fundamental."
+
+ESCENA 2 — Húmero proximal en Silla de Playa (AO Estación 1)
+Visual: Gráfico animado de un paciente semi-sentado en silla de playa con el Arco en C ingresando desde la cabecera, y dos pantallas limpias mostrando la proyección AP de Grashey (espacio articular abierto) y la vista en "Y" escapular.
+Texto en pantalla: "AO ESTACIÓN 1 (Húmero): Posición Beach Chair · True AP (Grashey) · Vista en 'Y' de escápula"
+Locución exacta:
+"En fracturas de húmero proximal, la Estación uno de AO Trauma sitúa al paciente semi-incorporado en posición de silla de playa... conocida en inglés como Beach Chair. Así el Arco en C entra cómodamente desde la cabecera de la camilla. Recuerda que la articulación del hombro está girada de forma natural entre treinta y cuarenta y cinco grados hacia atrás. Si disparas de frente a la mesa, los huesos se montan unos sobre otros. Por eso debes rotar el haz para lograr una True AP —término en inglés para proyección anteroposterior verdadera, llamada vista de Grashey—, donde se ve limpia la línea entre la cabeza del húmero y la escápula, complementada con la proyección en Y o axilar."
+
+ESCENA 3 — Control dinámico de los tornillos calcar
+Visual: Animación cercana de la cabeza del húmero con placa bloqueada y tornillos inferiores sosteniendo el hueso, rotando suavemente mientras un indicador verde confirma que la punta no perfora la articulación.
+Texto en pantalla: "TORNILLOS CALCAR: Rotación dinámica suave para descartar perforación articular"
+Locución exacta:
+"Al fijar una placa bloqueada o un clavo en el hombro, el momento crítico es comprobar los tornillos inferiores internos, llamados tornillos del calcar, que sostienen la cabeza del húmero para que no colapse. Mediante pulsos cortos mientras el cirujano rota suavemente el brazo hacia adentro y hacia afuera, todo el equipo confirma que ningún tornillo haya perforado la superficie de la articulación."
+
+ESCENA 4 — Codo y húmero distal: gira el brazo, no el Arco en C
+Visual: Comparativa en dos mitades: izquierda (X roja) intentando rotar 90 grados el pesado arco y chocando con la mesa auxiliar; derecha (check verde) flexionando el codo a 90 grados con el pulgar hacia arriba bajo haz vertical.
+Texto en pantalla: "CODO LATERAL: Flexionar codo a 90° (pulgar arriba) con haz vertical -> Sin colisiones"
+Locución exacta:
+"Y al bajar hacia el codo o la parte distal del húmero, recuerda una regla de oro que ahorra minutos y evita accidentes en mesa auxiliar radiolúcida. Para obtener la proyección lateral pura del codo, jamás intentes girar noventa grados todo el brazo mecánico del Arco en C alrededor de la camilla, porque arriesgas chocar contra los soportes y contaminar el campo estéril. La técnica correcta es mucho más simple: deja el arco quieto disparando en vertical, flexiona suavemente el codo del paciente a noventa grados apoyando el borde interno del antebrazo con el pulgar apuntando al techo, y dispara en un segundo."
+
+ESCENA 5 — Cierre y llamado al Minijuego 1
+Visual: Dra. Nova mirando a cámara con entusiasmo, invitando al primer minijuego del módulo.
+Texto en pantalla: "SIGUIENTE PASO: MINIJUEGO 1 — HOMBRO Y CODO ORTOGONAL"
+Locución exacta:
+"Posicionar bien al paciente casi siempre es más rápido y seguro que forzar la máquina. Entra ahora al minijuego Hombro y Codo Ortogonal para alinear la vista de Grashey, revisar los tornillos del calcar y lograr la lateral de codo sin colisiones. ¡Nos vemos en el segundo video!"
+```
+
+### Solo Locución Limpia (`m5_v1`)
+> Bienvenidos al quinto y último módulo del programa. Subimos ahora al miembro superior y a la columna vertebral. A diferencia del fémur, aquí los huesos son más delgados y la articulación se mueve con mucha facilidad... pero existe un reto importante. Cuando operamos el hombro o el húmero cerca del pecho, el grosor del tórax obliga al Arco en C a elevar su potencia y genera fuerte radiación dispersa hacia la cara y la tiroides del equipo. Por eso el orden en la mesa es fundamental.
+>
+> En fracturas de húmero proximal, la Estación uno de AO Trauma sitúa al paciente semi-incorporado en posición de silla de playa... conocida en inglés como Beach Chair. Así el Arco en C entra cómodamente desde la cabecera de la camilla. Recuerda que la articulación del hombro está girada de forma natural entre treinta y cuarenta y cinco grados hacia atrás. Si disparas de frente a la mesa, los huesos se montan unos sobre otros. Por eso debes rotar el haz para lograr una True AP —término en inglés para proyección anteroposterior verdadera, llamada vista de Grashey—, donde se ve limpia la línea entre la cabeza del húmero y la escápula, complementada con la proyección en Y o axilar.
+>
+> Al fijar una placa bloqueada o un clavo en el hombro, el momento crítico es comprobar los tornillos inferiores internos, llamados tornillos del calcar, que sostienen la cabeza del húmero para que no colapse. Mediante pulsos cortos mientras el cirujano rota suavemente el brazo hacia adentro y hacia afuera, todo el equipo confirma que ningún tornillo haya perforado la superficie de la articulación.
+>
+> Y al bajar hacia el codo o la parte distal del húmero, recuerda una regla de oro que ahorra minutos y evita accidentes en mesa auxiliar radiolúcida. Para obtener la proyección lateral pura del codo, jamás intentes girar noventa grados todo el brazo mecánico del Arco en C alrededor de la camilla, porque arriesgas chocar contra los soportes y contaminar el campo estéril. La técnica correcta es mucho más simple: deja el arco quieto disparando en vertical, flexiona suavemente el codo del paciente a noventa grados apoyando el borde interno del antebrazo con el pulgar apuntando al techo, y dispara en un segundo.
+>
+> Posicionar bien al paciente casi siempre es más rápido y seguro que forzar la máquina. Entra ahora al minijuego Hombro y Codo Ortogonal para alinear la vista de Grashey, revisar los tornillos del calcar y lograr la lateral de codo sin colisiones. ¡Nos vemos en el segundo video!
 
 ---
 
-### ESCENA 4: ¡Alerta Crítica! La Trampa Mortal del Mini C-Arm (Vosbikian 2014) (2:05 - 2:50)
-* **Prompt Visual Generativo:**  
-  `Dramatic warning scene. A surgeon rests a patient's hand directly on the Mini C-arm detector using it as an operating table. Bold glowing red hazard symbols: Vosbikian et al. (2014) study highlights surgeon's hand radiation increases TEN-FOLD (10X).`
-* **Acción y Expresión:**  
-  Expresión severa y de máxima advertencia. Niega rotundamente con la cabeza, señalando el peligro con autoridad.
-* **Elementos en Pantalla (HUD):**  
-  Alerta Biomecánica: Vosbikian et al. (2014) / Kaplan et al. (2016): `Usar el intensificador del Mini C-arm como mesa multiplica por 10 (DIEZ VECES) la dosis a las manos del cirujano`.
-* **DIÁLOGO & DIRECCIÓN DE VOZ:**
-  > **Dra. Nova:** *[Emoción: Severa advertencia de bioseguridad y firmeza absoluta | Tono: Grave, solemne y contundente | Ritmo: Marcando cada palabra]*  
-  > "*[Pausa dramática de 1s, mirada fija a la cámara]* Atención a una de las alertas de bioseguridad más urgentes de la traumatología moderna: en cirugía de mano es común usar el Mini-Arco en C. Vosbikian et al. (2014) y Kaplan et al. (2016) demostraron que los cirujanos cometen la peligrosa imprudencia de apoyar la mano del paciente sobre el detector para usarlo como mesa operatoria. ¡Hacer esto multiplica por **DIEZ VECES** la dosis directa de radiación a las manos del cirujano! Jamás operen sobre el receptor y mantengan sus dedos fuera del haz usando pinzas quirúrgicas largas."
+# VIDEO 2 (`m5_v2`): Radio Distal, Escafoides y la Trampa del Mini C-Arm
+* **Archivo destino:** `M05_V02_Muneca_MiniCArm.mp4`
+* **Duración estimada:** ~3:20 minutos (~495 palabras)
+* **Objetivo pedagógico:** Enseñar las proyecciones clave de muñeca con placa volar de radio distal (AO Estación 2: inclinación 11°–15°, oblicuas a 20°–30° para proteger DRUJ y tendón EPL) y escafoides, y transmitir dos alertas críticas de bioseguridad en manos: el riesgo x10 al usar el detector del Mini C-Arm como mesa (*table effect*) y el mito peligroso de los guantes plomados dentro del haz.
+* **Siglas y términos en inglés explicados:** `DRUJ`, `EPL`, `Mini C-Arm`, `Table Effect`, `ABC`.
 
----
----
+## Prompt Maestro Listo para Copiar y Pegar en HeyGen Video Agent
 
-# VIDEO 2: Columna Vertebral, Dosimetría Espinal (Lee 2012) y Cirugía 3D
-* **Duración:** 3:15 minutos  
-* **Objetivo:** Enseñar el paralelaje vertebral, la dosimetría espinal en Spine (mama mayor scatter, manos x20 directa), la maniobra de giro a 90° (Lee 2012) y la detección tomográfica 3D de tornillos transpediculares.
+```text
+INSTRUCCIONES PARA HEYGEN VIDEO AGENT:
+Crea un video educativo médico completo en español, en formato horizontal 16:9, de aproximadamente 3 minutos y 20 segundos.
+Presentadora única: usa mi Custom Avatar "Dra. Nova" con tono didáctico y de firme advertencia en bioseguridad para manos, dirigido a instrumentadores quirúrgicos, auxiliares de enfermería, tecnólogos y cirujanos.
+Estilo visual: estética quirúrgica moderna (azul oscuro, cian, rojo de alerta). Alterna a la Dra. Nova con animaciones anatómicas limpias de muñeca, radio distal, placa volar, escafoides y manos usando pinzas largas frente a un Mini Arco en C, más clips de archivo libres de copyright.
+REGLA CRÍTICA DE LOCUCIÓN: Lee únicamente el texto que aparece dentro de "Locución exacta" en cada escena. No leas en voz alta títulos, indicaciones visuales ni textos en pantalla. Respeta pausas breves donde aparezcan puntos suspensivos (...).
 
 ---
 
-### ESCENA 1: La Arquitectura Sagrada de la Columna (0:00 - 0:45)
-* **Prompt Visual Generativo:**  
-  `Medium shot, surgeon looking at a glowing 3D holographic human spine suspended in dark theater: Cervical (green), Thoracic (yellow), Lumbar (orange). Perfect vertebral pedicles and spinous processes aligned in true AP view.`
-* **Acción y Expresión:**  
-  Dra. Nova contempla la columna holográfica con respeto casi reverencial. Gira a cámara con gesto de precisión absoluta.
-* **Elementos en Pantalla (HUD):**  
-  Criterio de Alineación Espinal AP: Platillos vertebrales paralelos (sin doble contorno) // Apófisis espinosa en la línea media equidistante entre ambos pedículos ("ojos de la vértebra").
-* **DIÁLOGO & DIRECCIÓN DE VOZ:**
-  > **Dra. Nova:** *[Emoción: Respeto y máxima concentración | Tono: Solemne y de alta precisión | Ritmo: Pausado]*  
-  > "Si la traumatología es geometría, la cirugía de columna es arquitectura de máxima precisión. Aquí un solo milímetro de desviación en un tornillo transpedicular puede desgarrar la duramadre o lesionar las raíces nerviosas. La fluoroscopía es literalmente los ojos del cirujano de columna."
+ESCENA 1 — Radio distal: proteger la DRUJ y el tendón EPL (AO Estación 2)
+Visual: Plano medio de Dra. Nova seguido de una animación anatómica de muñeca con placa volar y tornillos: primero vista tangencial de 11–15° mostrando la articulación radiocubital, luego vista oblicua dorsal a 20–30° detectando un tornillo largo rozando un tendón en el dorso.
+Texto en pantalla: "AO ESTACIÓN 2 (Radio Distal): Inclinación 11°–15° + Oblicuas 20°–30° | Proteger DRUJ y tendón EPL"
+Locución exacta:
+"En este segundo video bajamos a la muñeca y la mano, donde un milímetro marca la diferencia entre una mano funcional o una lesión crónica. En fracturas de radio distal fijadas con placa volar —Estación dos de AO Trauma—, además de inclinar el haz de once a quince grados para seguir la caída natural de la muñeca, son obligatorias las proyecciones oblicuas girando el antebrazo veinte y treinta grados. ¿Qué buscamos descartar? Dos complicaciones graves. Primero, que un tornillo invada la DRUJ... siglas en inglés de Distal Radioulnar Joint, o articulación radiocubital distal, lo que bloquearía el giro de la muñeca. Y segundo, que un tornillo demasiado largo sobresalga por la parte dorsal cerca del tubérculo de Lister, rozando hasta romper el tendón EPL —Extensor Pollicis Longus, el tendón extensor largo del pulgar—."
+
+ESCENA 2 — Proyección especial de escafoides
+Visual: Gráfico animado limpio de una mano girada hacia el lado del meñique (desviación cubital) y ligeramente inclinada hacia atrás a 30 grados, mostrando el hueso escafoides completamente estirado sin superposición.
+Texto en pantalla: "ESCAFOIDES: Desviación cubital extrema + Extensión dorsal de 30°"
+Locución exacta:
+"Y cuando operamos el hueso escafoides de la muñeca, los huesecillos del carpo tienden a montarse entre sí en una toma normal. Para ver el escafoides largo y despejado, coloca la muñeca en desviación cubital máxima —inclinada hacia el dedo meñique— con una ligera extensión dorsal de treinta grados, y cierra el colimador sobre ese punto exacto."
+
+ESCENA 3 — Alerta máxima: la trampa del Mini C-Arm (Vosbikian et al., 2014)
+Visual: Animación de advertencia en rojo: una mano apoyada directamente sobre el receptor del Mini Arco en C como si fuera una mesa (marcado con X roja y "10X dosis a manos"), comparada con una mesa quirúrgica independiente y pinzas largas (check verde).
+Texto en pantalla: "ALERTA MINI C-ARM: Apoyar la mano sobre el detector (Table Effect) = 10x dosis directa"
+Locución exacta:
+"Ahora escucha una de las alertas de bioseguridad más urgentes de todo el curso. En cirugía de mano es muy común usar un equipo portátil llamado Mini C-Arm... es decir, Mini Arco en C. Por ser pequeño, muchos creen que casi no irradia. ¡Error grave! Los estudios de Vosbikian y Kaplan demostraron que apoyar la mano del paciente sobre el receptor del Mini Arco para usarlo como mesa operatoria —lo que en inglés llaman table effect, o efecto mesa— multiplica por diez veces la dosis directa sobre las manos del cirujano. Incluso con Mini Arco, todo el personal debe vestir equipo plomado completo, respetar veinte centímetros mínimos de distancia foco-piel y operar siempre sobre una mesa de mano independiente."
+
+ESCENA 4 — El mito peligroso de los guantes plomados y uso de pinzas largas
+Visual: Gráfico animado de un guante plomado metido en el haz haciendo que el sensor ABC dispare la potencia al máximo (alerta ámbar), reemplazado por una pinza de Kocher larga sosteniendo el fragmento óseo con los dedos a >15 cm del cono de rayos.
+Texto en pantalla: "MITO DEL GUANTE PLOMADO: Dispara el ABC y crea rebote interno | Usar pinzas largas (>15 cm)"
+Locución exacta:
+"Y atención a otro mito peligroso: pensar que unos guantes quirúrgicos plomados te autorizan a meter los dedos dentro del rayo directo. Si colocas un guante con plomo en el centro de la imagen, el sensor ABC —Automatic Brightness Control, Control Automático de Brillo— detecta esa densidad y dispara la potencia al máximo, aumentando la radiación y generando rebotes internos contra tu propia piel. La regla es absoluta: manos fuera del haz primario siempre... usa pinzas de Kocher largas o sujetadores radiolúcidos para mantener los dedos a más de quince centímetros del rayo."
+
+ESCENA 5 — Cierre y llamado al Minijuego 2
+Visual: Dra. Nova mirando a cámara con firmeza protectora invitando al segundo minijuego del módulo.
+Texto en pantalla: "SIGUIENTE PASO: MINIJUEGO 2 — MUÑECA Y MANOS FUERA DEL HAZ"
+Locución exacta:
+"Proteger el tendón del pulgar del paciente y proteger tus propias manos va de la mano. Entra al minijuego Muñeca y Manos Fuera del Haz para detectar tornillos peligrosos en el radio distal, posicionar el escafoides y operar con seguridad alrededor del Mini Arco. ¡Nos vemos en el último video del curso!"
+```
+
+### Solo Locución Limpia (`m5_v2`)
+> En este segundo video bajamos a la muñeca y la mano, donde un milímetro marca la diferencia entre una mano funcional o una lesión crónica. En fracturas de radio distal fijadas con placa volar —Estación dos de AO Trauma—, además de inclinar el haz de once a quince grados para seguir la caída natural de la muñeca, son obligatorias las proyecciones oblicuas girando el antebrazo veinte y treinta grados. ¿Qué buscamos descartar? Dos complicaciones graves. Primero, que un tornillo invada la DRUJ... siglas en inglés de Distal Radioulnar Joint, o articulación radiocubital distal, lo que bloquearía el giro de la muñeca. Y segundo, que un tornillo demasiado largo sobresalga por la parte dorsal cerca del tubérculo de Lister, rozando hasta romper el tendón EPL —Extensor Pollicis Longus, el tendón extensor largo del pulgar—.
+>
+> Y cuando operamos el hueso escafoides de la muñeca, los huesecillos del carpo tienden a montarse entre sí en una toma normal. Para ver el escafoides largo y despejado, coloca la muñeca en desviación cubital máxima —inclinada hacia el dedo meñique— con una ligera extensión dorsal de treinta grados, y cierra el colimador sobre ese punto exacto.
+>
+> Ahora escucha una de las alertas de bioseguridad más urgentes de todo el curso. En cirugía de mano es muy común usar un equipo portátil llamado Mini C-Arm... es decir, Mini Arco en C. Por ser pequeño, muchos creen que casi no irradia. ¡Error grave! Los estudios de Vosbikian y Kaplan demostraron que apoyar la mano del paciente sobre el receptor del Mini Arco para usarlo como mesa operatoria —lo que en inglés llaman table effect, o efecto mesa— multiplica por diez veces la dosis directa sobre las manos del cirujano. Incluso con Mini Arco, todo el personal debe vestir equipo plomado completo, respetar veinte centímetros mínimos de distancia foco-piel y operar siempre sobre una mesa de mano independiente.
+>
+> Y atención a otro mito peligroso: pensar que unos guantes quirúrgicos plomados te autorizan a meter los dedos dentro del rayo directo. Si colocas un guante con plomo en el centro de la imagen, el sensor ABC —Automatic Brightness Control, Control Automático de Brillo— detecta esa densidad y dispara la potencia al máximo, aumentando la radiación y generando rebotes internos contra tu propia piel. La regla es absoluta: manos fuera del haz primario siempre... usa pinzas de Kocher largas o sujetadores radiolúcidos para mantener los dedos a más de quince centímetros del rayo.
+>
+> Proteger el tendón del pulgar del paciente y proteger tus propias manos va de la mano. Entra al minijuego Muñeca y Manos Fuera del Haz para detectar tornillos peligrosos en el radio distal, posicionar el escafoides y operar con seguridad alrededor del Mini Arco. ¡Nos vemos en el último video del curso!
 
 ---
 
-### ESCENA 2: El Paralelaje y la Vista Anteroposterior Verdadera (0:45 - 1:35)
-* **Prompt Visual Generativo:**  
-  `Extreme close-up on lumbar vertebral body fluoroscopy. Parallax rays diverging outward from center. When vertebral body is dead center, the endplates form a single razor-sharp cortical line and pedicles are symmetrical.`
-* **Acción y Expresión:**  
-  Gesto de paralelismo estricto con ambas palmas de las manos midiendo el espacio en el aire.
-* **Elementos en Pantalla (HUD):**  
-  Efecto Paralaje: Los rayos X divergen desde el tubo central; solo los rayos axiales centrales son perpendiculares. La vértebra operada debe estar estrictamente en el centro de la pantalla.
-* **DIÁLOGO & DIRECCIÓN DE VOZ:**
-  > **Dra. Nova:** *[Emoción: Didáctica analítica | Tono: Explicativo y riguroso | Ritmo: Preciso]*  
-  > "Cuidado con el paralaje: los rayos X divergen en cono desde el tubo emisor. Solo los rayos del centro son perfectamente rectos. Por eso, la vértebra que estás instrumentando debe ubicarse **exactamente en el centro de tu monitor**. En la proyección Anteroposterior, los platillos vertebrales deben verse como una sola línea nítida sin doble contorno, y la apófisis espinosa debe quedar equidistante entre ambos pedículos."
+# VIDEO 3 (`m5_v3`): Columna Vertebral, Paralelaje, Dosimetría Espinal y Cierre
+* **Archivo destino:** `M05_V03_Columna_Cierre.mp4`
+* **Duración estimada:** ~3:25 minutos (~505 palabras)
+* **Objetivo pedagógico:** Enseñar los principios fluoroscópicos críticos en cirugía de columna (paralelaje vertebral, criterios de AP verdadera y reto lateral C7–T1), los hallazgos dosimétricos de Lee et al. (2012, *Spine*: mama, manos >20x y giro de cabeza a 90°), el control tomográfico 3D / O-Arm en tornillos pediculares, y realizar el cierre integral del curso conectando con el último minijuego y el Examen Final de Certificación (90%).
+* **Siglas y términos en inglés explicados:** `AP`, `O-Arm`, `CBCT`.
+
+## Prompt Maestro Listo para Copiar y Pegar en HeyGen Video Agent
+
+```text
+INSTRUCCIONES PARA HEYGEN VIDEO AGENT:
+Crea un video educativo médico completo en español, en formato horizontal 16:9, de aproximadamente 3 minutos y 25 segundos.
+Presentadora única: usa mi Custom Avatar "Dra. Nova" comenzando con máxima precisión técnica para cirugía de columna y cerrando con un tono cálido, inspirador y de orgullo profesional dirigido a todo el equipo de quirófano (instrumentadores, auxiliares de enfermería, tecnólogos y médicos).
+Estilo visual: quirófano moderno en azul marino oscuro, cian médico y acentos dorados hacia el cierre final. Alterna a la Dra. Nova con animaciones anatómicas limpias de columna vertebral (paralelaje central, pedículos simétricos, giro de cabeza a 90 grados, corte axial 3D pedicular) y clips de archivo libres de copyright.
+REGLA CRÍTICA DE LOCUCIÓN: Lee únicamente el texto que aparece dentro de "Locución exacta" en cada escena. No leas en voz alta títulos, indicaciones visuales ni textos en pantalla. Respeta pausas breves donde aparezcan puntos suspensivos (...).
 
 ---
 
-### ESCENA 3: Dosimetría Espinal y el Giro de Cabeza a 90° (Lee et al. 2012, Spine) (1:35 - 2:25)
-* **Prompt Visual Generativo:**  
-  `Surgeon simulates the head rotation maneuver during spinal fluoroscopy: at the exact moment of beam exposure, she turns her head 90 degrees away from the patient. Holographic data from Lee et al. 2012 (Spine journal): Breast receives highest scatter; Hand receives >20x direct dose; 90-degree head turn slashes eye/thyroid dose.`
-* **Acción y Expresión:**  
-  Gira la cabeza 90 grados hacia el lado opuesto de la mesa en el momento del disparo, ilustrando la maniobra conductual con elegancia.
-* **Elementos en Pantalla (HUD):**  
-  Lee et al. (2012, Spine):  
-  1. Mama es el órgano más expuesto a radiación dispersa (18.6 - 81.6 µGy/min).  
-  2. Manos reciben dosis directa $\ge$20 veces mayor que cualquier órgano interno (377 µGy/min).  
-  3. Giro de cabeza a 90° reduce drásticamente dosis a cristalino y tiroides.
-* **DIÁLOGO & DIRECCIÓN DE VOZ:**
-  > **Dra. Nova:** *[Emoción: Revelación científica y protección práctica | Tono: Seguro y pedagógico | Ritmo: Marcado]*  
-  > "En cirugía de columna se disparan los picos de dosis más altos. El riguroso estudio de Lee et al. en la prestigiosa revista *Spine* reveló dos hallazgos impactantes: primero, que la mama es el tejido que más radiación dispersa absorbe; y segundo, que las manos del cirujano reciben **más de veinte veces la dosis** de cualquier órgano interno. Pero Lee et al. demostraron una maniobra conductual brillante: si en una urgencia no tienes gafas plomadas, **girar tu cabeza 90 grados en dirección opuesta al paciente en el momento del disparo** reduce drásticamente la dosis dispersa a tu cristalino y tiroides sin costo alguno."
+ESCENA 1 — Columna vertebral: paralelaje y vista AP verdadera
+Visual: Plano medio de Dra. Nova seguido de una animación 3D de vértebras lumbares bajo un cono divergente de rayos X: cuando la vértebra está en el borde se ven bordes dobles; cuando se centra exactamente en el medio de la pantalla los platillos forman una sola línea nítida y la apófisis espinosa queda equidistante entre ambos pedículos.
+Texto en pantalla: "COLUMNA VERTEBRAL: Centrar la vértebra evita el paralelaje | Platillos nítidos y pedículos simétricos"
+Locución exacta:
+"Llegamos al video final de nuestro entrenamiento con el territorio más delicado de todos: la cirugía de columna vertebral. Aquí un milímetro de desviación en un tornillo transpedicular puede comprometer la médula o los nervios, y el Arco en C es literalmente la brújula del equipo. Debes recordar una regla física clave: el efecto paralelaje. Como los rayos salen del tubo abriéndose en forma de cono, solo los rayos del centro viajan perfectamente rectos. Por eso, la vértebra exacta que estás operando debe quedar siempre en el centro de la pantalla. En una AP —anteroposterior— verdadera, sus bordes superior e inferior se ven como una sola línea nítida sin doble sombra, y la apófisis espinosa queda centrada entre ambos pedículos... y en la vista lateral de cuello bajo, entre la séptima vértebra cervical y la primera torácica, suele requerirse tracción suave de los hombros para despejar el hueso."
+
+ESCENA 2 — Dosimetría espinal y giro de cabeza a 90° (Lee et al., 2012 en Spine)
+Visual: Gráfico animado mostrando tasas en columna: manos en alerta roja (>20x directa), pecho protegido, y una demostración limpia de la regla de girar la cabeza 90 grados en dirección contraria al paciente durante el disparo.
+Texto en pantalla: "ESTUDIO LEE (Spine 2012): Manos >20x dosis · Mama mayor scatter · Girar cabeza 90° al disparar"
+Locución exacta:
+"En columna se usan energías altas y disparos frecuentes. El estudio de Lee y colaboradores en la revista Spine demostró dos datos críticos: el tejido mamario es el que más radiación dispersa absorbe en el tronco, y las manos reciben más de veinte veces la dosis de cualquier órgano interno. Pero también descubrieron una maniobra sencilla que no cuesta nada: si en una emergencia estás sin gafas plomadas, girar la cabeza noventa grados hacia el lado opuesto al paciente en el segundo exacto del disparo reduce de inmediato la radiación que llega a tus ojos y tiroides."
+
+ESCENA 3 — Control 3D con Arco CBCT y sistema O-Arm
+Visual: Animación limpia de un equipo rotando 3D alrededor de la columna y proyectando un corte axial donde un tornillo pedicular roza el canal medular, permitiendo corregirlo antes de terminar la cirugía.
+Texto en pantalla: "VERIFICACIÓN 3D (CBCT / O-Arm): Confirma tornillos transpediculares antes de cerrar piel"
+Locución exacta:
+"Por esa exigencia milimétrica, hoy las cirugías complejas de columna se apoyan en arcos tres D de tipo CBCT —Cone-Beam Computed Tomography, tomografía de haz cónico— o en sistemas O-Arm... que en inglés significa brazo en forma de O, un anillo cerrado que gira alrededor de la mesa. Sus cortes tomográficos confirman en vivo que ningún tornillo haya invadido el canal medular antes de cerrar la herida."
+
+ESCENA 4 — Síntesis de los pilares S.E.R. y despedida del curso
+Visual: Dra. Nova en primer plano cálido y luminoso con íconos elegantes de los 5 módulos y las letras S.E.R. (Seguridad, Eficiencia, Responsabilidad) iluminándose suavemente a su lado.
+Texto en pantalla: "FILOSOFÍA S.E.R.: Seguridad · Eficiencia · Responsabilidad | Guardián invisible del quirófano"
+Locución exacta:
+"Colegas de todo el equipo quirúrgico: han recorrido un camino completo desde los fundamentos de la física y los pilares S.E.R. —Seguridad, Eficiencia y Responsabilidad—, pasando por el blindaje ALARA, la consola, los ocho grados de libertad y las proyecciones reales de miembro inferior, superior y columna. Dominar el Arco en C te convierte en el guardián invisible de la salud de tus compañeros y del paciente que confía en nosotros."
+
+ESCENA 5 — Reto final: Minijuego 3 y Examen de Certificación
+Visual: Dra. Nova sonriendo con orgullo, señalando la tarjeta de cierre hacia el último minijuego y el Examen Final con sello dorado de 90%.
+Texto en pantalla: "SIGUIENTE: MINIJUEGO 3 (DESAFÍO ESPINAL 3D) -> EXAMEN FINAL (Mínimo 90%)"
+Locución exacta:
+"Para cerrar la fase práctica, entra ahora al último minijuego: Desafío Espinal tres D, donde corregirás el paralelaje vertebral, aplicarás el giro de cabeza y revisarás tornillos en tres dimensiones. Al completarlo, se abrirá tu Examen Final de Certificación, que exige un noventa por ciento para obtener tu diploma verificable. ¡Mucho éxito en tu examen y nos vemos en quirófano!"
+```
+
+### Solo Locución Limpia (`m5_v3`)
+> Llegamos al video final de nuestro entrenamiento con el territorio más delicado de todos: la cirugía de columna vertebral. Aquí un milímetro de desviación en un tornillo transpedicular puede comprometer la médula o los nervios, y el Arco en C es literalmente la brújula del equipo. Debes recordar una regla física clave: el efecto paralelaje. Como los rayos salen del tubo abriéndose en forma de cono, solo los rayos del centro viajan perfectamente rectos. Por eso, la vértebra exacta que estás operando debe quedar siempre en el centro de la pantalla. En una AP —anteroposterior— verdadera, sus bordes superior e inferior se ven como una sola línea nítida sin doble sombra, y la apófisis espinosa queda centrada entre ambos pedículos... y en la vista lateral de cuello bajo, entre la séptima vértebra cervical y la primera torácica, suele requerirse tracción suave de los hombros para despejar el hueso.
+>
+> En columna se usan energías altas y disparos frecuentes. El estudio de Lee y colaboradores en la revista Spine demostró dos datos críticos: el tejido mamario es el que más radiación dispersa absorbe en el tronco, y las manos reciben más de veinte veces la dosis de cualquier órgano interno. Pero también descubrieron una maniobra sencilla que no cuesta nada: si en una emergencia estás sin gafas plomadas, girar la cabeza noventa grados hacia el lado opuesto al paciente en el segundo exacto del disparo reduce de inmediato la radiación que llega a tus ojos y tiroides.
+>
+> Por esa exigencia milimétrica, hoy las cirugías complejas de columna se apoyan en arcos tres D de tipo CBCT —Cone-Beam Computed Tomography, tomografía de haz cónico— o en sistemas O-Arm... que en inglés significa brazo en forma de O, un anillo cerrado que gira alrededor de la mesa. Sus cortes tomográficos confirman en vivo que ningún tornillo haya invadido el canal medular antes de cerrar la herida.
+>
+> Colegas de todo el equipo quirúrgico: han recorrido un camino completo desde los fundamentos de la física y los pilares S.E.R. —Seguridad, Eficiencia y Responsabilidad—, pasando por el blindaje ALARA, la consola, los ocho grados de libertad y las proyecciones reales de miembro inferior, superior y columna. Dominar el Arco en C te convierte en el guardián invisible de la salud de tus compañeros y del paciente que confía en nosotros.
+>
+> Para cerrar la fase práctica, entra ahora al último minijuego: Desafío Espinal tres D, donde corregirás el paralelaje vertebral, aplicarás el giro de cabeza y revisarás tornillos en tres dimensiones. Al completarlo, se abrirá tu Examen Final de Certificación, que exige un noventa por ciento para obtener tu diploma verificable. ¡Mucho éxito en tu examen y nos vemos en quirófano!
 
 ---
 
-### ESCENA 4: El Veredicto Final del Arco en C 3D / O-Arm (2:25 - 3:15)
-* **Prompt Visual Generativo:**  
-  `The C-arm / O-Arm executes an automated volumetric spin. 3D axial reconstruction displays a transpedicular screw breaching the medial pedicle wall into the spinal canal. Surgeon nods, ready to reposition before wound closure.`
-* **Acción y Expresión:**  
-  Observa la reconstrucción 3D axial con serenidad quirúrgica. Asiente con convicción tecnológica.
-* **Elementos en Pantalla (HUD):**  
-  Navegación y Fluoroscopía 3D intraoperatoria: Detección tomográfica de perforación de cortical pedicular o invasión de canal medular antes del cierre de piel.
-* **DIÁLOGO & DIRECCIÓN DE VOZ:**
-  > **Dra. Nova:** *[Emoción: Triunfo tecnológico y seguridad del paciente | Tono: Conclusivo y categórico | Ritmo: Dinámico]*  
-  > "Y en instrumentaciones espinales complejas, los arcos 3D y sistemas O-Arm representan la cúspide de la bioseguridad: permiten corroborar mediante cortes tomográficos intraoperatorios que ningún tornillo pedicular haya violado la cortical medial hacia el canal medular antes de que el paciente abandone el quirófano. ¡Tecnología y técnica unidas para salvar vidas!"
+## Especificación de Minijuegos del Módulo 5 (Unity WebGL — `Modulo05`)
 
----
----
+### 1. `m5_s1` — Minijuego 1: Hombro y Codo Ortogonal (`M05_MG1_ShoulderElbowViews`, `Modulo05`, Fase 1)
+* **Premisa clínica:** Posicionamiento de miembro superior en silla de playa y mesa auxiliar de mano (Estación 1 AO Trauma).
+* **Mecánica en Unity (3 casos):**
+  1. **Proyección de Grashey (AP verdadera de hombro):** Desde la cabecera en silla de playa, angular el arco 30°–45° hasta despejar por completo la interlínea articular glenohumeral sin superposición.
+  2. **Control dinámico de tornillos calcar:** Rotar suavemente el húmero en pantalla para detectar si un tornillo inferomedial invade el cartílago glenoideo.
+  3. **Lateral de codo sin colisiones:** Elegir flexionar el codo del paciente a 90° (pulgar hacia arriba) sobre el soporte radiolúcido manteniendo el haz vertical, en lugar de rotar 90° el gantry contra la mesa.
+* **Códigos de error (`RecordError`):**
+  * `SE_FALSE_AP_SHOULDER`: Aceptó una AP paralela a la camilla sin alinear los 30°–45° de la glena (Grashey).
+  * `SE_CALCAR_BREACH_MISSED`: Pasó por alto un tornillo calcar penetrando la articulación glenohumeral.
+  * `SE_ELBOW_GANTRY_COLLISION`: Intentó rotar 90° la maquinaria pesada en codo en lugar de flexionar la extremidad.
 
-# VIDEO RECOPILATORIO: Cierre Integral del Curso y Despedida
-* **Duración:** 2:00 minutos  
-* **Objetivo:** Felicitar al alumno, integrar los conceptos cardinales de todo el programa y dejarlo listo para el Examen Final de Certificación (90% requerido).
+### 2. `m5_s2` — Minijuego 2: Muñeca y Manos Fuera del Haz (`M05_MG2_WristMiniCArmSafety`, `Modulo05`, Fase 2)
+* **Premisa clínica:** Osteosíntesis de radio distal (AO Estación 2), escafoides y bioseguridad con Mini C-Arm (Vosbikian 2014).
+* **Mecánica en Unity (3 retos):**
+  1. **Radio distal (DRUJ y EPL):** Aplicar inclinación tangencial de 11°–15° y oblicuas de pronosupinación a 20°–30° para detectar un tornillo que entra a la articulación radiocubital distal (DRUJ) y otro que protruye dorsalmente sobre el tendón EPL.
+  2. **Escafoides:** Colocar la muñeca en desviación cubital máxima y extensión dorsal de 30° con colimación cerrada.
+  3. **Trampa del Mini C-Arm y guante plomado:** Rechazar apoyar la mano sobre el detector (*table effect* x10) y rechazar meter el guante plomado en el haz (over-driving del ABC); seleccionar mesa independiente, EPP completo para el equipo y pinza larga de Kocher (>15 cm fuera del haz).
+* **Códigos de error (`RecordError`):**
+  * `WM_DRUJ_EPL_MISSED`: No identificó la invasión de la DRUJ o el tornillo dorsal amenazando al tendón EPL.
+  * `WM_MINI_CARM_TABLE_EFFECT`: Apoyó la mano del paciente sobre el receptor del Mini C-Arm (10x dosis a manos).
+  * `WM_LEAD_GLOVE_IN_BEAM`: Metió la mano con guante plomado dentro del haz disparando el ABC, en vez de usar pinzas largas (>15 cm).
 
----
-
-### ESCENA 1: La Cima Formativa (0:00 - 0:35)
-* **Prompt Visual Generativo:**  
-  `Grand hero shot, the operating room is gloriously illuminated in deep cyan and radiant gold, the modern C-arm shines in the background. The surgeon walks center stage, smiling with profound pride and clapping energetically.`
-* **Acción y Expresión:**  
-  Camina hacia el centro, aplaude con orgullo y abre los brazos con cálida satisfacción docente.
-* **Elementos en Pantalla (HUD):**  
-  Los 5 escudos holográficos orbitando en círculo: `1. Fundamentos // 2. ALARA & Scatter // 3. Cinemática 8-DoF // 4. Miembro Inferior // 5. Miembro Superior & Columna`.
-* **DIÁLOGO & DIRECCIÓN DE VOZ:**
-  > **Dra. Nova:** *[Emoción: Orgullo profundo, triunfo y felicitación sincera | Tono: Inspirador y emotivo | Ritmo: Cálido y seguro]*  
-  > "¡Lo han logrado! Han completado el programa de formación más riguroso, completo y científicamente fundamentado en operación y bioseguridad de Arco en C. Desde la física de Röntgen hasta la cinemática de ocho grados de libertad y los estándares globales de AO Trauma."
-
----
-
-### ESCENA 2: El Decálogo Eterno del Quirófano (0:35 - 1:15)
-* **Prompt Visual Generativo:**  
-  `Fast montage reflecting the core clinical pearls: Lead vest and thyroid collar, Tube under table, Hug the intensifier, 8-DoF spatial control, Center-Center screw, 90-degree head turn.`
-* **Acción y Expresión:**  
-  Enumera con autoridad ejecutiva y pasión por la profesión médica.
-* **Elementos en Pantalla (HUD):**  
-  1. Sistema S.E.R. (Seguridad, Eficiencia, Responsabilidad).  
-  2. Tubo siempre debajo de la mesa.  
-  3. "Hug the intensifier" (25x dosis en torso del lado del tubo).  
-  4. Manos siempre fuera del haz directo.  
-  5. Adquisición pulsada y grito "¡Disparo!".
-* **DIÁLOGO & DIRECCIÓN DE VOZ:**
-  > **Dra. Nova:** *[Emoción: Firmeza profesional y compromiso ético | Tono: Contundente y memorable | Ritmo: Marcando el legado]*  
-  > "Graben estos principios para toda su vida profesional:  
-  > Sistema S.E.R.: Seguridad, Eficiencia y Responsabilidad.  
-  > Tubo emisor siempre debajo de la mesa.  
-  > Protéjanse del lado del detector: *Hug the intensifier*.  
-  > Colimen siempre para ganar contraste y recortar dosis.  
-  > Manos jamás en el haz primario.  
-  > Y antes de pisar el pedal: adquisición pulsada y aviso en voz alta a todo el quirófano."
-
----
-
-### ESCENA 3: El Guardián Invisible (1:15 - 1:40)
-* **Prompt Visual Generativo:**  
-  `Close-up on surgeon's face, gentle fade of technological HUDs into a soft warm clinical glow, direct genuine connection with the viewer.`
-* **Acción y Expresión:**  
-  Mano al pecho, mirada directa y sentida a la cámara. Su voz transmite la nobleza de la vocación médica.
-* **Elementos en Pantalla (HUD):**  
-  Fondo sereno y elegante, sin distracciones.
-* **DIÁLOGO & DIRECCIÓN DE VOZ:**
-  > **Dra. Nova:** *[Emoción: Conexión humana, vocación y calidez | Tono: Cercano y conmovedor | Ritmo: Pausado]*  
-  > "Operar el fluoroscopio con maestría te convierte en el guardián invisible de la salud de todo el quirófano... y en el mejor aliado del paciente que confía su vida en nuestras manos sobre la mesa de operaciones."
-
----
-
-### ESCENA 4: El Reto Final: La Certificación (1:40 - 2:00)
-* **Prompt Visual Generativo:**  
-  `Medium shot, surgeon smiles proudly, gives a formal salute, step back into the illuminated theater. Giant 3D golden sign lights up: FINAL CERTIFICATION EXAM // 90% PASS SCORE // CRYPTOGRAPHIC ENDORSEMENT.`
-* **Acción y Expresión:**  
-  Sonríe con gran confianza, da un paso atrás y señala el portal del examen.
-* **Elementos en Pantalla (HUD):**  
-  Letrero de oro 3D: `EXAMEN FINAL DE CERTIFICACIÓN // APROBACIÓN MÍNIMA: 90%`.
-* **DIÁLOGO & DIRECCIÓN DE VOZ:**
-  > **Dra. Nova:** *[Emoción: Entusiasmo retador y despedida triunfal | Tono: Estimulante y seguro | Ritmo: Rápido y enérgico]*  
-  > "Ahora tienen un último reto: el **Examen Final de Certificación**. Necesitan un 90% para obtener su constancia con firma criptográfica y código QR verificable. Confíen en su entrenamiento, lean con criterio cada caso clínico...  
-  > ¡Mucho éxito en su examen y nos vemos en quirófano!"
+### 3. `m5_s3` — Minijuego 3: Desafío Espinal 3D (`M05_MG3_SpineParallax3D`, `Modulo05`, Fase 3)
+* **Premisa clínica:** Instrumentación pedicular en columna vertebral, control del paralelaje y dosimetría espinal (Lee 2012).
+* **Mecánica en Unity (3 pasos):**
+  1. **Corrección de paralelaje:** Desplazar longitudinalmente la mesa/arco hasta ubicar la vértebra instrumentada exactamente en el centro del monitor, eliminando el doble contorno de platillos y logrando pedículos simétricos equidistantes de la apófisis espinosa.
+  2. **Protección conductual (Lee 2012):** En proyección lateral de columna (con tracción de hombros en C7–T1 si aplica), activar el giro de cabeza a 90° en sentido opuesto al paciente al momento del disparo y retirar las manos del haz (>20x directa).
+  3. **Auditoría 3D (CBCT / O-Arm):** Inspeccionar los cortes axiales intraoperatorios y marcar el tornillo transpedicular que invade la cortical medial del canal medular antes de cerrar piel.
+* **Códigos de error (`RecordError`):**
+  * `SP_PARALLAX_ERROR`: Disparó con la vértebra desplazada al borde de la pantalla (doble contorno de platillos).
+  * `SP_NO_HEAD_TURN_90`: Expuso al cristalino y tiroides sin gafas ni giro cefálico de 90° en disparo lateral espinal.
+  * `SP_PEDICLE_BREACH_MISSED`: Aprobó la instrumentación sin detectar la perforación medial del canal en el corte 3D.
