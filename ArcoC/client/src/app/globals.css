@@ -3005,3 +3005,82 @@ main {
 .hero::after {
   width: min(600px, 100%);
 }
+
+/* «Mi progreso» y preguntas frecuentes (Fase 6) */
+.progress-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.account-list {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) 1fr;
+  gap: 8px 16px;
+  margin: 0 0 12px;
+}
+
+.account-list dt {
+  color: var(--text-muted);
+}
+
+.account-list dd {
+  margin: 0;
+}
+
+.faq-item summary {
+  cursor: pointer;
+}
+
+.faq-item[open] summary {
+  color: var(--accent-cyan);
+}
+
+/* Pasos de «Mi progreso»: columnas iguales en todos los módulos */
+.progress-steps-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+/* Tablas que en un teléfono se leen como lista: cada fila es un bloque y sus celdas van seguidas */
+@media (max-width: 640px) {
+  .stack-on-mobile thead,
+  .stack-on-mobile colgroup {
+    display: none;
+  }
+
+  .stack-on-mobile,
+  .stack-on-mobile tbody,
+  .stack-on-mobile tr {
+    display: block;
+    width: 100%;
+  }
+
+  .stack-on-mobile tr {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .stack-on-mobile td {
+    display: inline-block;
+    border: none;
+    padding: 2px 8px 2px 0;
+  }
+
+  .stack-on-mobile td:first-child {
+    display: block;
+  }
+}
+
+/* Al saltar a una sección (p. ej. /course/progreso#progress-points), el encabezado fijo no la tapa */
+#my-progress section,
+#faq details {
+  scroll-margin-top: calc(var(--header-height) + 16px);
+}
+
+/* En un teléfono el encabezado ocupa dos líneas: no queda fijo, para no quitarle tanto espacio a la página */
+@media (max-width: 640px) {
+  .modern-header {
+    position: relative;
+  }
+}

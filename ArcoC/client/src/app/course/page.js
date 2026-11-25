@@ -299,6 +299,8 @@ export default function Course() {
               >
                 📋 Guía de Bolsillo (PDF)
               </a>
+              <Link href="/course/progreso" className="sidebar-nav-btn mt-8" id="sidebar-my-progress">📊 Mi progreso</Link>
+              <Link href="/course/ayuda" className="sidebar-nav-btn mt-8" id="sidebar-faq">❓ Preguntas frecuentes</Link>
               {!isPreview && <MyReportsButton className="sidebar-nav-btn mt-8" />}
             </div>
           </div>
