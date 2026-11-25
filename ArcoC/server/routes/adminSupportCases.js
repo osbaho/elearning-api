@@ -4,6 +4,7 @@ import { authenticateToken, requireAdmin } from '../middleware/auth.js';
 import { logAdminAction } from '../services/adminActions.js';
 import { sendCaseAnsweredEmail } from '../services/emailService.js';
 import { CASE_STATUSES, caseDto, validateResolution } from '../services/supportCases.js';
+import { notifyStudent } from '../services/studentNotifications.js';
 
 /**
  * Bandeja de casos reportados (Fase 4).
@@ -74,6 +75,7 @@ router.post('/support-cases/:id/resolve', async (req, res) => {
         reason: resolution,
         details: { caseId, stepId: row.step_id || null, category: row.category },
       }, tx);
+      await notifyStudent(row.student_id, 'case_answered', { status, resolution }, tx);
     });
 
     const email = await sendCaseAnsweredEmail({

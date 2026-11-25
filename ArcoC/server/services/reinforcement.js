@@ -11,6 +11,10 @@ import { TOKEN_PURPOSES, issueToken } from './authTokens.js';
 import { buildInductionEmail, buildReinforcementEmail } from './emailService.js';
 import { queueEmail } from './mailer.js';
 import { loadProgressRows, toIso } from './progressTracking.js';
+import { stepDescription } from './stepLabels.js';
+import { notifyStudent } from './studentNotifications.js';
+
+export { stepDescription };
 
 /**
  * Correos de refuerzo (Fase 5). El admin los envía desde la bandeja de alertas, uno por uno o en
@@ -67,18 +71,6 @@ export async function reinforcementAllowance(studentId, now = new Date()) {
     return { ...base, allowed: false, reason: `Ya recibió un refuerzo hace menos de ${REINFORCEMENT_RULES.MIN_HOURS_BETWEEN} horas.` };
   }
   return { ...base, allowed: true, reason: null };
-}
-
-/** Paso de la malla en palabras (el servidor no tiene los títulos de los videos). */
-export function stepDescription(stepId) {
-  if (stepId === null || stepId === undefined) return 'ninguno: ya terminaste el curso';
-  if (stepId === 'exam') return 'el examen final';
-  const match = /^m(\d+)_([vs])(\d+)$/.exec(stepId);
-  if (!match) return stepId;
-  const [, moduleNumber, kind, index] = match;
-  if (kind === 'v') return `el video ${index} del módulo ${moduleNumber}`;
-  const title = getSimulatorEntry(stepId)?.title;
-  return `el minijuego ${index} del módulo ${moduleNumber}${title ? ` («${title}»)` : ''}`;
 }
 
 /** Valores de las variables de la plantilla para un estudiante, su fila de seguimiento y su alerta. */
@@ -313,6 +305,9 @@ export async function sendReinforcements({ ids, note = null, adminId, rowsById =
         adminId, action: 'alert.send', targetType: 'student', targetId: student.id, reason: note,
         details: { alertId: id, alertCode: entry.alert_code, alertKey: entry.alert_key, emailLogId, template: email.template },
       });
+      if (email.kind !== 'invitation') {
+        await notifyStudent(student.id, 'reinforcement', { subject: email.subject, text: email.text });
+      }
       results.push({ id, ok: true, status: 'sent', emailLogId });
     } catch (err) {
       console.error('Error sending reinforcement email:', err);

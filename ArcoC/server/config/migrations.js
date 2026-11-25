@@ -414,4 +414,26 @@ export const MIGRATIONS = [
       await db.addColumnIfMissing('simulator_attempts', 'practice', 'INTEGER DEFAULT 0');
     },
   },
+  {
+    version: 12,
+    name: 'avisos_del_estudiante',
+    // Fase 6: avisos dentro de la plataforma (además del correo) cuando el admin responde un
+    // reporte, reabre un paso, concede un intento del examen o envía un refuerzo.
+    async up(db) {
+      const { id } = db.types;
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS student_notifications (
+          id ${id},
+          student_id INTEGER NOT NULL,
+          kind TEXT NOT NULL,
+          title TEXT NOT NULL,
+          body TEXT,
+          link TEXT,
+          created_at TEXT NOT NULL,
+          read_at TEXT
+        )
+      `);
+      await db.run('CREATE INDEX IF NOT EXISTS idx_student_notifications_student ON student_notifications(student_id)');
+    },
+  },
 ];
