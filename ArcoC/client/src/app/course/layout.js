@@ -1,11 +1,13 @@
 'use client';
 
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { useAuth } from '../../context/AuthContext';
 import ProtectedRoute from '../../components/ProtectedRoute';
 
 export default function CourseLayout({ children }) {
   const { logout, user } = useAuth();
+  const pathname = usePathname();
 
   // El admin entra al curso en modo revisión (ve todo, nada se registra)
   const isAdmin = user?.role === 'admin';
@@ -17,14 +19,16 @@ export default function CourseLayout({ children }) {
           <Link href="/" className="header-logo">🏥 C-Arm Master</Link>
           <nav className="header-nav" aria-label="Navegación principal">
             <Link href="/">Inicio</Link>
-            <Link href="/course" className="active">Curso</Link>
+            <Link href="/course" className={pathname === '/course' ? 'active' : ''}>Curso</Link>
+            <Link href="/course/progreso" id="nav-my-progress" className={pathname === '/course/progreso' ? 'active' : ''}>Mi progreso</Link>
+            <Link href="/course/ayuda" id="nav-faq" className={pathname === '/course/ayuda' ? 'active' : ''}>Ayuda</Link>
             <button onClick={logout} className="btn-logout" aria-label="Cerrar sesión">Cerrar sesión</button>
             {isAdmin ? (
               <Link href="/admin" id="nav-back-admin" className="nav-points" aria-label="Volver al panel del administrador">
                 ⚙️ Panel admin
               </Link>
             ) : (
-              <Link href="/course" id="nav-points-display" className="nav-points" aria-label="Puntos de reserva">
+              <Link href="/course/progreso#progress-points" id="nav-points-display" className="nav-points" aria-label="Puntos de reserva: ver el historial">
                 {user?.reservePoints || 0} Pts
               </Link>
             )}

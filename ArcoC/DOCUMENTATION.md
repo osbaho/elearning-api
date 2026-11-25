@@ -124,7 +124,8 @@ ArcoC/
 │   │   ├── adminSupportCases.js   # Bandeja de casos reportados y respuesta al estudiante
 │   │   ├── adminReopen.js         # Reintentos auditados: reabrir un paso o conceder un intento del examen
 │   │   ├── adminAlerts.js         # Bandeja de alertas y correos de refuerzo (vista previa, envío, plantillas)
-│   │   └── supportCases.js        # «Reportar un problema» del estudiante y sus reportes
+│   │   ├── supportCases.js        # «Reportar un problema» del estudiante y sus reportes
+│   │   └── studentProgress.js     # «Mi progreso» del estudiante (GET /api/student/progress)
 │   ├── utils/
 │   │   ├── certificate.js         # Generación de PDF (PDFKit) y validación pública
 │   │   ├── cohortActa.js          # Acta colectiva y libro de calificaciones por promoción (PDF)
@@ -144,6 +145,7 @@ ArcoC/
 │   │   ├── supportCases.js        # Validación y formato de los casos reportados
 │   │   ├── reopen.js              # Reabrir pasos: anular partidas, descontar puntos, intentos adicionales
 │   │   ├── alertInbox.js          # Bandeja de alertas: revisión, estados, período de espera y decisiones
+│   │   ├── studentProgress.js     # «Mi progreso»: avance, puntajes, historial de puntos, examen y datos
 │   │   ├── reinforcement.js       # Correos de refuerzo: plantillas, valores, límite por estudiante y envío
 │   │   └── simulatorErrors.js     # Detalle de errores de cada partida que envía Unity (validación y lectura)
 │   └── scripts/
@@ -175,6 +177,8 @@ ArcoC/
 │       │   ├── onboarding/page.js # Registro biométrico y formulario Habeas Data
 │       │   ├── course/page.js     # Dashboard central del curso, selector de módulos y guía rápida
 │       │   ├── course/practice/   # Rutas dinámicas para minijuegos interactivos
+│       │   ├── course/progreso/   # «Mi progreso» del estudiante
+│       │   ├── course/ayuda/      # Preguntas frecuentes del estudiante
 │       │   ├── course/exam/page.js# Interfaz del examen y panel de proctoring
 │       │   ├── admin/page.js      # Panel: auditoría IES y seguimiento del avance (pestañas)
 │       │   ├── admin/_components/ # Promociones, gestión, importación CSV, bitácora, seguimiento y preparación del lanzamiento
@@ -183,6 +187,8 @@ ArcoC/
 │       │   ├── ModuleCard.js      # Tarjeta de módulo con estado visual y «Reportar un problema»
 │       │   ├── ReportProblemButton.js # «Reportar un problema»: botón y modal (portal)
 │       │   ├── MyReportsButton.js # «Mis reportes» del estudiante
+│       │   ├── MyProgressView.js  # «Mi progreso»: avance, puntos, examen, certificado y datos
+│       │   ├── FaqView.js         # Preguntas frecuentes (con las reglas vigentes del examen)
 │       │   ├── VideoPlayer.js     # Reproductor con control de adelanto (scrubbing)
 │       │   ├── SimulatorView.js   # Página de práctica: partidas, iframe del simulador Unity y Atlas Radiológico
 │       │   ├── ProtectedRoute.js  # Guardián de rutas por autenticación y rol
@@ -204,7 +210,7 @@ ArcoC/
     │   ├── loginHelper.js         # Utilidad de login y reset para tests
     │   ├── simulatorHelper.js     # Partidas del simulador y avance de pasos vía API
     │   └── adminHelper.js         # Sesión de admin en contexto propio, promociones y matrículas vía API
-    └── e2e/                       # 36 suites Playwright (ver sección 13)
+    └── e2e/                       # 37 suites Playwright (ver sección 13)
 ```
 
 En la raíz del monorepo, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) corre el lint del cliente y la suite E2E sobre SQLite y PostgreSQL (ver sección 13).
@@ -409,6 +415,26 @@ El programa académico consta de **5 módulos temáticos** y **30 pasos obligato
 **Fuente única de verdad:** la lista ordenada vive en [`server/config/curriculum.js`](server/config/curriculum.js) (`COURSE_STEPS`, usada por progreso, examen, admin y correos) y en [`client/src/lib/courseConfig.js`](client/src/lib/courseConfig.js) (títulos, videos e íconos). El test E2E 19 falla si ambas listas difieren. Los totales (30) se calculan; no hay constantes repartidas por el código (tampoco en el acta, el CSV, el panel admin ni los correos).
 
 **Panel del estudiante (`/course`):** al entrar se abre el módulo del paso pendiente (el primero sin completar o, con la malla completa, el examen), con su tarjeta resaltada, y el botón **«Continuar donde quedé»** lleva hasta él. La tarjeta del examen distingue tres estados: *aprobado* (✅ con la nota), *no aprobado* (❌ con la nota y «Reintentar Examen» con los intentos restantes) y *sin intentos* (botón deshabilitado con aviso de contactar al administrador). Antes, una nota reprobatoria se mostraba como «✅ Aprobado (60%)» y deshabilitaba el examen.
+
+### «Mi progreso» y preguntas frecuentes ([`server/services/studentProgress.js`](server/services/studentProgress.js))
+Se abren desde el encabezado del curso (**Mi progreso**, **Ayuda**) y desde el menú de módulos. El saldo de puntos del encabezado lleva al historial.
+
+**Mi progreso** (`/course/progreso`, datos de `GET /api/student/progress`; solo estudiantes, también con la promoción cerrada):
+* **Resumen:** avance (pasos y porcentaje), paso actual con «Continuar», saldo de Puntos de Reserva y estado del examen.
+* **Avance por módulo:** cada video (visto, empezado o pendiente, con fecha) y cada minijuego, con su estado, su mejor nivel (10/5/0) con porcentaje, sus partidas y sus puntos.
+* **Historial de Puntos de Reserva:**
+  * cada partida terminada suma; si después se anuló, aparece tachada;
+  * cada comodín 50/50 resta (`exam_logs` `WILDCARD_USED`);
+  * reabrir un minijuego resta lo que se descontó, con el motivo (bitácora `student.reopen`);
+  * «Puntos iniciales y ajustes» es la diferencia con el saldo real.
+
+  Como la bitácora guarda la fecha al segundo, dentro de un mismo segundo el ajuste va después de las partidas que ajusta.
+* **Examen final:** reglas vigentes, cada intento con fecha, estado y nota, y, si aprobó, el certificado en PDF (`GET /api/certificate`) con su código de verificación.
+* **Mis datos:** nombre, correo, documento, institución, promoción, ventana de acceso, activación y último ingreso. **✏️ Solicitar una corrección** abre «Reportar un problema» con la categoría «Cuenta o acceso».
+
+Sale de la misma ficha que usa el admin (sección 10.10), sin lo que es solo del admin: correos, incidencias de supervisión, reportes (el estudiante tiene «Mis reportes») ni la bitácora. En un teléfono, las tablas de pasos e historial se leen como lista.
+
+**Preguntas frecuentes** (`/course/ayuda`): cómo se avanza, los Puntos de Reserva, el examen y qué pasa al no aprobar, el certificado, qué hacer ante una falla, el cierre de la promoción, la contraseña y los datos, y la cámara. Las reglas del examen (preguntas por intento, nota mínima, intentos y costo del comodín) salen del perfil (`/api/student/me`), no se escriben a mano.
 
 ### Enforce de Secuencialidad Backend
 El endpoint `POST /api/progress/:moduleId` valida en el servidor la lista ordenada `COURSE_STEPS`. Para marcar cualquier paso `n`, el paso `n-1` debe existir previamente en estado `'completed'` en `course_progress`; repetir un paso ya completado responde éxito sin cambios. **Todo minijuego** exige además **al menos una partida terminada** (`simulator_attempts` con `status = 'completed'`). Antes, los minijuegos sin escena en el simulador se podían finalizar sin jugar. Uno pendiente no admite partidas en producción, así que ahí el estudiante no puede finalizarlo ni avanzar más allá (sección 6). El administrador es la excepción: en modo revisión abre cualquier paso y nada se registra (sección 10.11). El módulo `'exam'` está protegido contra marcado manual: solo el endpoint `/api/submit-exam` puede otorgarlo tras calificar formalmente con la nota mínima (90%). Los conteos de avance (bloqueo del examen, estándar IES, CSV, recordatorios) solo cuentan pasos de la malla vigente.
@@ -1204,10 +1230,10 @@ Microsoft 365 y Google Workspace restringen el SMTP con usuario y contraseña (e
 
 ## 13. Suite de Pruebas Automatizadas (Playwright)
 
-El proyecto cuenta con un conjunto integral de **141 pruebas E2E automatizadas** organizadas en **36 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
+El proyecto cuenta con un conjunto integral de **146 pruebas E2E automatizadas** organizadas en **37 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
 
 ```bash
-# Ejecutar todas las 36 suites E2E (141 pruebas) sobre la base de desarrollo (SQLite)
+# Ejecutar todas las 37 suites E2E (146 pruebas) sobre la base de desarrollo (SQLite)
 npx playwright test
 
 # La misma suite sobre un PostgreSQL 16 desechable (sin Docker; detén antes los servidores de desarrollo)
@@ -1299,6 +1325,7 @@ Las reglas que dependen del tiempo real (visualización mínima de videos y dura
 | **34** | **`34-alert-inbox.test.js`** | **Bandeja de alertas.** Reglas puras: la clave por alerta y paso; el plan de la revisión (alertas nuevas, cambio de detalle, pospuestas que vuelven, alertas que se cierran solas y período de espera); la validación de las decisiones. Por la API: la revisión llena la bandeja sin el estudiante de prueba y sin duplicar entradas con dos revisiones a la vez. Posponer guarda fecha, quién y nota; descartar va a la bitácora. Decidir dos veces da 409, una alerta inexistente 404, una acción inválida 400, y un estudiante no puede decidir (403). La alerta descartada no vuelve durante la espera, y la pospuesta se cierra sola cuando el estudiante aprueba el minijuego. En grupo, las que ya no estaban abiertas se informan sin frenar el resto. En el panel: el contador de la pestaña, posponer con plazo y nota, descartar en grupo y el historial. |
 | **35** | **`35-reinforcement-emails.test.js`** | **Correos de refuerzo.** Reglas puras: las plantillas originales son válidas; validación del asunto, el texto y las variables; variables sin valor como «—»; valores tomados del estudiante y su alerta; la invitación de «Sin activar» sin emitir enlace en la vista previa. Por la API: la vista previa usa la plantilla y los datos del estudiante. Al enviar dos alertas del mismo estudiante, sale una y la otra queda pendiente por el límite de 24 horas (sola responde 429), y el «Recordatorio» de la auditoría también da 429. Quedan el historial con el estado del correo, la ficha y la bitácora, y una alerta enviada no se reenvía (409). A una cuenta desactivada no se le envía, y su alerta se cierra sola. Plantillas: inválidas dan 400, un código sin plantilla 404 y un estudiante 403; la editada se usa en la vista previa con datos de muestra y en el correo real, y se restaura el original con su bitácora. En el panel: vista previa y envío, el historial y el editor (vista previa, guardar y restaurar). |
 | **36** | **`36-student-fixes.test.js`** | **Correcciones del perfil del estudiante (Fase 6).** La ruta de cada cuadro de la supervisión (worker libre, worker ocupado, worker caído, sin worker y detección en curso). Toda clase del marcado tiene estilos, salvo los ganchos del recorrido guiado. En la práctica, el subtítulo queda alineado con el título. A 390 px, el encabezado del estudiante y del admin no se desborda y la página no se desplaza a lo ancho. Y un examen con la cámara simulada del navegador (sin `skipCamera`): la supervisión analiza cuadros («Rostro no detectado») sin errores del hilo principal en la consola. |
+| **37** | **`37-my-progress.test.js`** | **Mi progreso y preguntas frecuentes.** Reglas puras: el costo de cada comodín y el resumen del historial de puntos, ordenado y con el ajuste después de la partida dentro del mismo segundo. Por la API: avance (3/30), paso actual, mejor nivel, partidas y puntos de cada minijuego, historial de puntos y datos de la cuenta, sin lo que es solo del admin. Al reabrir el minijuego se descuentan sus puntos con el motivo y sus partidas quedan anuladas. Un comodín del examen aparece como gasto y los puntos iniciales como ajuste. El admin recibe 403 y sin sesión, 401. En el curso: la página muestra el resumen, los pasos, los movimientos de puntos, las reglas del examen y los datos, y «Solicitar una corrección» abre un reporte de cuenta. Las preguntas frecuentes usan las reglas vigentes del examen. |
 
 ---
 
