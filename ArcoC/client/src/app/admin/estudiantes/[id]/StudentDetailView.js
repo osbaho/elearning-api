@@ -73,6 +73,7 @@ function MinigameAttempts({ step }) {
               <td>{when(a.startedAt)}</td>
               <td title={a.voided ? `Anulada el ${when(a.voidedAt)}: ${a.voidReason || ''}` : undefined}>
                 {a.voided ? '⊘ Anulada' : a.status === 'completed' ? 'Terminada' : 'Sin terminar'}
+              {a.practice && <span className="test-badge ml-8" title="Con el minijuego ya finalizado; no suma puntos">Práctica libre</span>}
               </td>
               <td>{a.score === null ? '—' : `${a.score}/${a.maxScore}`}</td>
               <td>{fmt(a.errorCount)}</td>

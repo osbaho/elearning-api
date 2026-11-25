@@ -81,7 +81,8 @@ export async function loadMyProgress(studentId) {
       mod.steps.push({ stepId: step.stepId, type: 'video', completedAt: step.completedAt, startedAt: step.startedAt });
       continue;
     }
-    const done = step.attempts.filter((a) => a.status === 'completed');
+    const all = step.attempts.filter((a) => a.status === 'completed');
+    const done = all.filter((a) => !a.practice);
     for (const a of done) {
       plays.push({ at: a.completedAt, stepId: step.stepId, tier: a.tier, points: a.pointsAwarded, voided: a.voided });
     }
@@ -97,6 +98,8 @@ export async function loadMyProgress(studentId) {
       bestPercent: step.summary.bestPercent,
       points: step.summary.points,
       lastPlayedAt: step.summary.lastPlayedAt,
+      // Práctica libre (sin puntos) después de finalizar
+      practiceAttempts: all.filter((a) => a.practice && !a.voided).length,
       // Las últimas partidas, de la más reciente a la más antigua
       recent: done.slice(-5).reverse().map((a) => ({
         at: a.completedAt, tier: a.tier, points: a.pointsAwarded, voided: a.voided, errors: a.errorCount,

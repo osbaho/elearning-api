@@ -117,6 +117,9 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
   const [status, setStatus] = useState('Esperando...');
   const [showConfirm, setShowConfirm] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
+  // Práctica libre (Fase 6): con el minijuego finalizado se sigue jugando, sin puntos
+  const [practiceMode, setPracticeMode] = useState(false);
+  const [practiceAttempts, setPracticeAttempts] = useState(0);
 
   const iframeRef = useRef(null);
   const attemptRef = useRef(null);
@@ -164,6 +167,7 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
         if (ok) {
           setStepInfo(data);
           setCompletedAttempts(data.completedAttempts || 0);
+          setPracticeAttempts(data.practiceAttempts || 0);
           setStepPoints(data.pointsEarned || 0);
         } else {
           setStepInfo({ available: false, error: httpStatus === 404 ? null : data?.error || `Error ${httpStatus}` });
@@ -188,8 +192,8 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
   }, []);
 
   const startAttempt = useCallback(async () => {
-    if (isCompleted) {
-      addToast('Ya finalizaste este minijuego.', 'warning');
+    if (isCompleted && !practiceMode) {
+      addToast('Ya finalizaste este minijuego. Puedes seguir en práctica libre, sin puntos.', 'warning');
       return null;
     }
     setAttemptState('starting');
@@ -198,7 +202,7 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
     try {
       const { ok, status: httpStatus, data } = await api('/simulator/attempts', {
         method: 'POST',
-        body: JSON.stringify({ stepId: moduleId }),
+        body: JSON.stringify({ stepId: moduleId, ...(practiceMode ? { practice: true } : {}) }),
       });
       if (!ok) {
         setAttemptState('error');
@@ -219,7 +223,7 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
       addToast(`Error de red: ${err.message}`, 'error');
       return null;
     }
-  }, [api, moduleId, isCompleted, buildState, hasSimulator, addToast]);
+  }, [api, moduleId, isCompleted, practiceMode, buildState, hasSimulator, addToast]);
 
   const submitResult = useCallback(async (current, result) => {
     if (submittedAttemptsRef.current.has(current.attemptId)) return;
@@ -241,7 +245,9 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
       }
       setLastResult(data);
       setAttemptState('finished');
-      if (!data.duplicate) {
+      if (!data.duplicate && data.practice) {
+        setPracticeAttempts((n) => n + 1);
+      } else if (!data.duplicate) {
         setCompletedAttempts((n) => n + 1);
         setSessionAttempts((n) => n + 1);
         setSessionPoints((n) => n + data.pointsAwarded);
@@ -250,7 +256,9 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
       if (typeof data.stepPointsEarned === 'number') setStepPoints(data.stepPointsEarned);
       setStatus('Resultado registrado');
       const tier = TIER_INFO[data.tier] || TIER_INFO.failed;
-      let toastText = data.pointsAwarded > 0
+      let toastText = data.practice
+        ? `Práctica libre — ${tier.title}. No suma Puntos de Reserva.`
+        : data.pointsAwarded > 0
         ? `${tier.title}: +${data.pointsAwarded} Puntos de Reserva ⚡`
         : `${tier.title}: sin Puntos de Reserva esta vez.`;
       if (data.stepCapReached) {
@@ -363,16 +371,28 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
     }
   };
 
-  const showIframe = hasSimulator && !isCompleted && attempt && buildState === 'available';
+  const showIframe = hasSimulator && (!isCompleted || practiceMode) && attempt && buildState === 'available';
   const busy = attemptState === 'starting' || attemptState === 'submitting';
   const tierInfo = lastResult ? (TIER_INFO[lastResult.tier] || TIER_INFO.failed) : null;
 
   const renderStage = () => {
-    if (isCompleted) {
+    if (isCompleted && !practiceMode) {
+      const canPractice = hasSimulator && buildState !== 'missing';
       return (
-        <div className="mt-24 p-20 bg-success-light border-cyan radius-lg">
+        <div className="mt-24 p-20 bg-success-light border-cyan radius-lg" id="practice-completed">
           <h3 className="text-cyan mb-8">✅ Práctica Completada</h3>
           <p className="text-sm">Ya has finalizado esta práctica y tus puntos han sido registrados. ¡Buen trabajo!</p>
+          {canPractice && (
+            <>
+              <p className="text-sm text-secondary">
+                Puedes seguir practicando cuando quieras: las partidas de práctica libre no suman Puntos de Reserva.
+                {practiceAttempts > 0 ? ` Llevas ${practiceAttempts}.` : ''}
+              </p>
+              <button className="btn btn-secondary mt-8" id="btn-free-practice" onClick={() => setPracticeMode(true)}>
+                🔁 Practicar sin puntos
+              </button>
+            </>
+          )}
         </div>
       );
     }
@@ -436,8 +456,11 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
         </div>
         {buildState !== 'missing' && (
           <button className="btn btn-primary mt-16" onClick={startAttempt} disabled={busy || buildState === 'checking'}>
-            ▶ Comenzar minijuego
+            {practiceMode ? '🔁 Comenzar práctica libre' : '▶ Comenzar minijuego'}
           </button>
+        )}
+        {practiceMode && (
+          <p className="text-xs text-secondary mt-8" id="practice-mode-note">Práctica libre: tus partidas quedan registradas con su nivel, pero no suman Puntos de Reserva.</p>
         )}
       </div>
     );

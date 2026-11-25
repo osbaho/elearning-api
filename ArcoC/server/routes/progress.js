@@ -99,7 +99,8 @@ router.post('/:moduleId', authenticateToken, requireOpenAccess, async (req, res)
     // no admite partidas en producción, así que ahí no se puede finalizar ni pasar de largo.
     if (isPracticeStep(moduleId)) {
       const played = await get(
-        `SELECT id FROM simulator_attempts WHERE student_id = ? AND step_id = ? AND status = 'completed' AND voided_at IS NULL LIMIT 1`,
+        `SELECT id FROM simulator_attempts WHERE student_id = ? AND step_id = ? AND status = 'completed' AND voided_at IS NULL
+           AND COALESCE(practice, 0) = 0 LIMIT 1`,
         [studentId, moduleId]
       );
       if (!played) {

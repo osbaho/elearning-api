@@ -189,7 +189,7 @@ export async function loadProgressRows(filters = {}, { db = { all }, now = new D
   );
   const attempts = await db.all(
     `SELECT student_id, step_id, status, score, max_score, tier, points_awarded, completed_at
-       FROM simulator_attempts WHERE status = 'completed' AND voided_at IS NULL AND ${ofFiltered}`,
+       FROM simulator_attempts WHERE status = 'completed' AND voided_at IS NULL AND COALESCE(practice, 0) = 0 AND ${ofFiltered}`,
     params
   );
   const views = await db.all(
@@ -335,6 +335,8 @@ function mapAttempt(a) {
     voidReason: a.void_reason || null,
     // Qué hizo mal y en qué segundo (lo envía Unity; [] en partidas de builds anteriores)
     errors: readErrorDetail(a.error_detail),
+    // Práctica libre (Fase 6): con el minijuego ya finalizado, sin puntos; no cuenta en el resumen
+    practice: Boolean(Number(a.practice)),
   };
 }
 
@@ -362,7 +364,7 @@ export async function loadStudentDetail(
   );
   const attempts = await db.all(
     `SELECT id, step_id, status, started_at, completed_at, score, max_score, passed, error_count, dose_msv,
-            time_seconds, tier, points_awarded, voided_at, void_reason, error_detail
+            time_seconds, tier, points_awarded, voided_at, void_reason, error_detail, practice
        FROM simulator_attempts WHERE student_id = ? ORDER BY started_at`,
     [studentId]
   );
