@@ -271,3 +271,22 @@ export async function sendStepReopenedEmail({ studentId, name, email, stepId, ki
   ].filter(Boolean).join('\n');
   return queueEmail({ studentId, to: email, subject, html, text, template: 'step_reopened', adminId });
 }
+
+/**
+ * Correo de refuerzo (Fase 5) con el texto ya completado de la plantilla. Cada párrafo (separado
+ * por una línea en blanco) va escapado y con sus saltos de línea; al final, el botón para entrar
+ * al curso. El admin decide cuándo se envía desde la bandeja de alertas.
+ */
+export function buildReinforcementEmail({ subject, body, badge = 'Seguimiento de tu curso' }) {
+  const loginUrl = appUrl('/login');
+  const paragraphs = String(body).split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+  const html = layout({
+    title: subject,
+    badge,
+    bodyHtml: `
+      ${paragraphs.map((p) => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`).join('\n      ')}
+      <a href="${loginUrl}" class="btn">Ir a mi curso ▶</a>`,
+  });
+  const text = [...paragraphs, `Ingresa en ${loginUrl}`].join('\n\n');
+  return { subject, html, text };
+}

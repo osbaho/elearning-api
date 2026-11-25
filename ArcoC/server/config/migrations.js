@@ -377,4 +377,21 @@ export const MIGRATIONS = [
       );
     },
   },
+  {
+    version: 9,
+    name: 'plantillas_de_refuerzo',
+    // Fase 5: el admin edita el texto del correo de refuerzo de cada tipo de alerta. Sin fila se
+    // usa el texto original (config/reinforcementTemplates.js); borrar la fila lo restaura.
+    async up(db) {
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS reinforcement_templates (
+          alert_code TEXT PRIMARY KEY,
+          subject TEXT NOT NULL,
+          body TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          updated_by_admin_id INTEGER
+        )
+      `);
+    },
+  },
 ];

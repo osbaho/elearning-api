@@ -107,6 +107,7 @@ ArcoC/
 │   │   ├── examRules.js           # Reglas del examen: preguntas por intento, nota mínima, intentos, comodín
 │   │   ├── appUrls.js             # URL pública del frontend para los enlaces de correos (APP_PUBLIC_URL)
 │   │   ├── simulatorCatalog.js    # Minijuego → escena y fase del simulador Unity, y si ya está en el build
+│   │   ├── reinforcementTemplates.js # Textos originales de los correos de refuerzo y sus variables
 │   │   └── reservePoints.js       # Regla 10/5/0 por fase y techo de 500 Puntos de Reserva
 │   ├── middleware/
 │   │   ├── auth.js                # Sesión: JWT + cuenta activa + versión de sesión; requireAdmin
@@ -122,7 +123,7 @@ ArcoC/
 │   │   ├── adminTestStudents.js   # Herramientas para estudiantes de prueba (reiniciar, llevar a un paso, copiar)
 │   │   ├── adminSupportCases.js   # Bandeja de casos reportados y respuesta al estudiante
 │   │   ├── adminReopen.js         # Reintentos auditados: reabrir un paso o conceder un intento del examen
-│   │   ├── adminAlerts.js         # Bandeja de alertas: revisar, posponer y descartar
+│   │   ├── adminAlerts.js         # Bandeja de alertas y correos de refuerzo (vista previa, envío, plantillas)
 │   │   └── supportCases.js        # «Reportar un problema» del estudiante y sus reportes
 │   ├── utils/
 │   │   ├── certificate.js         # Generación de PDF (PDFKit) y validación pública
@@ -143,6 +144,7 @@ ArcoC/
 │   │   ├── supportCases.js        # Validación y formato de los casos reportados
 │   │   ├── reopen.js              # Reabrir pasos: anular partidas, descontar puntos, intentos adicionales
 │   │   ├── alertInbox.js          # Bandeja de alertas: revisión, estados, período de espera y decisiones
+│   │   ├── reinforcement.js       # Correos de refuerzo: plantillas, valores, límite por estudiante y envío
 │   │   └── simulatorErrors.js     # Detalle de errores de cada partida que envía Unity (validación y lectura)
 │   └── scripts/
 │       ├── seed.js                # Inicialización de cuenta de Administrador
@@ -201,7 +203,7 @@ ArcoC/
     │   ├── loginHelper.js         # Utilidad de login y reset para tests
     │   ├── simulatorHelper.js     # Partidas del simulador y avance de pasos vía API
     │   └── adminHelper.js         # Sesión de admin en contexto propio, promociones y matrículas vía API
-    └── e2e/                       # 34 suites Playwright (ver sección 13)
+    └── e2e/                       # 35 suites Playwright (ver sección 13)
 ```
 
 En la raíz del monorepo, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) corre el lint del cliente y la suite E2E sobre SQLite y PostgreSQL (ver sección 13).
@@ -334,6 +336,9 @@ Historial de intentos del examen, una fila por intento:
 
 #### 12. `support_cases` (migración 5)
 Casos de «Reportar un problema» (sección 10.13): `student_id`, `step_id` (paso de la malla, `exam` o vacío), `category` (`video` | `minigame` | `exam` | `account` | `other`), `description`, `context` (JSON con URL, navegador y tamaño de ventana), `status` (`open` | `resolved` | `rejected`), `created_at`, `resolved_at`, `resolved_by_admin_id` y `resolution` (la respuesta que recibe el estudiante).
+
+#### 14. `reinforcement_templates` (migración 9)
+Texto editado de los correos de refuerzo (sección 10.16): `alert_code` (clave), `subject`, `body`, `updated_at` y `updated_by_admin_id`. Sin fila, se usa el texto original de `server/config/reinforcementTemplates.js`; borrar la fila lo restaura.
 
 #### 13. `alert_inbox` (migración 8)
 Bandeja de alertas (sección 10.15): `student_id`, `alert_code`, `alert_key` (el código, más el paso en las de minijuego, p. ej. `minigame_struggling:m1_s1`), `status` (`pending` | `postponed` | `sent` | `dismissed` | `resolved`), `details` (JSON de la alerta), `first_seen_at`, `updated_at`, `postponed_until` (AAAA-MM-DD), `decided_at`, `decided_by_admin_id`, `decision_note`, `email_log_id` (el correo de refuerzo, cuando se envía) y `resolved_at`. Un índice único parcial impide dos entradas abiertas (`pending` o `postponed`) del mismo estudiante y alerta.
@@ -698,7 +703,7 @@ Toda modificación hecha desde el panel queda registrada con el administrador, l
 * **Estados reales:** `sent` (entregado al servidor SMTP), `simulated` (modo sin SMTP: no salió), `queued` y `failed`. La migración 2 marcó como `simulated` los registros anteriores, que decían `sent` aunque ningún correo salía del servidor.
 * **Sin secretos en la bitácora:** `body_content` guarda el HTML con los enlaces privados ocultos. El contenido real va cifrado (AES-256-GCM) en `payload_encrypted` y se borra al enviarse. La migración 2 ocultó también las contraseñas temporales que las inducciones anteriores habían guardado en texto plano.
 * **Transporte:** `MAIL_TRANSPORT=smtp` con `SMTP_HOST`, `SMTP_PORT` (465 = TLS directo; 587 = STARTTLS), `SMTP_USER`, `SMTP_PASS` y `MAIL_FROM`. Sirve para cualquier proveedor (Amazon SES, Brevo, Postmark, Microsoft 365, Google Workspace…). Sin `SMTP_HOST` el modo es `log` (simulado). En producción el arranque avisa si no hay SMTP, y `/api/health` informa `mail: smtp | log`.
-* **Plantillas ([`server/services/emailService.js`](server/services/emailService.js)):** bienvenida con enlace de activación (`induction_activation`), guía para cuentas ya activadas (`induction`), restablecimiento de contraseña (`password_reset`), recordatorio de avance (`progress_reminder`) respuesta a un reporte del estudiante (`case_answered`, sección 10.13) y aviso de un paso reabierto o un intento adicional (`step_reopened`, sección 10.14). Los enlaces usan `APP_PUBLIC_URL`.
+* **Plantillas ([`server/services/emailService.js`](server/services/emailService.js)):** bienvenida con enlace de activación (`induction_activation`), guía para cuentas ya activadas (`induction`), restablecimiento de contraseña (`password_reset`), recordatorio de avance (`progress_reminder`) respuesta a un reporte del estudiante (`case_answered`, sección 10.13) aviso de un paso reabierto o un intento adicional (`step_reopened`, sección 10.14) y correos de refuerzo de la bandeja de alertas (`reinforcement_<alerta>`, sección 10.16). Los enlaces usan `APP_PUBLIC_URL`.
 
 ### 10.6 Evaluación del Estándar Institucional IES (6 Criterios Obligatorios)
 Al seleccionar a cualquier estudiante y pulsar **"🔍 Ver Estándar IES"**, la plataforma evalúa en servidor (`GET /api/admin/compliance/:studentId`) el cumplimiento riguroso de los **6 limitantes del estándar de acreditación**:
@@ -745,7 +750,7 @@ Para satisfacer los más altos estándares de gobernanza académica y simplifica
 #### 4. Semáforo de Rezago Académico (+7 Días) y Recordatorio Automatizado
 * **Endpoint:** `POST /api/admin/send-reminder/:studentId`
 * **Detección Preventiva de Deserción:** El sistema analiza en tiempo real la fecha de habilitación (`start_date`) y la última actividad del alumno. Si han transcurrido más de 7 días sin completar la malla curricular ni aprobar el examen, se asigna automáticamente una insignia de alerta visual: **"⚠️ Rezago (+7d)"**.
-* **Acción en 1 Clic:** El administrador dispone del botón **"🔔 Recordatorio"** para despachar un correo institucional motivacional que resume los pasos pendientes para alcanzar el estándar IES y evitar la caducidad de su cupo. Cada envío queda en la bitácora de acciones con el avance del estudiante en ese momento; no se envía a cuentas desactivadas.
+* **Acción en 1 Clic:** El administrador dispone del botón **"🔔 Recordatorio"** para despachar un correo institucional motivacional que resume los pasos pendientes para alcanzar el estándar IES y evitar la caducidad de su cupo. Cada envío queda en la bitácora de acciones con el avance del estudiante en ese momento; no se envía a cuentas desactivadas. Respeta el límite de los correos de refuerzo (uno cada 24 horas y dos por semana por estudiante, sección 10.16): si se superaría, responde `429` con el motivo.
 
 ### 10.9 Preparación del Lanzamiento ([`server/services/launchReadiness.js`](server/services/launchReadiness.js))
 La plataforma sale con los 5 módulos completos y el banco oficial de preguntas. `GET /api/admin/launch-readiness` (solo admin) devuelve `{ ready, checks }`, y cada verificación trae `id`, `label`, `ok`, `detail` y `pending`. Son tres:
@@ -923,12 +928,12 @@ Los estudiantes de prueba no entran. Hay una sola entrada abierta por estudiante
 | Pendiente (`pending`) | Detectada; espera una decisión |
 | Pospuesta (`postponed`) | El admin la pospuso 1, 3, 7, 14 o 30 días; ese día vuelve a pendientes si sigue cumpliéndose |
 | Descartada (`dismissed`) | El admin decidió no actuar |
-| Correo enviado (`sent`) | Se envió un correo de refuerzo (lo agrega la parte 2 de la Fase 5) |
+| Correo enviado (`sent`) | El admin envió el correo de refuerzo (sección 10.16); el historial muestra el estado del correo |
 | Se cerró sola (`resolved`) | Dejó de cumplirse antes de que se decidiera |
 
 **Período de espera:** una alerta descartada (o con correo enviado) no vuelve a la bandeja durante 7 días aunque siga cumpliéndose. Pasado ese plazo, si sigue vigente, vuelve como pendiente para revisarla otra vez (`INBOX_RULES.COOLDOWN_DAYS`).
 
-**Decidir.** Cada fila tiene **⏸ Posponer** y **✖ Descartar**; con las casillas se deciden varias a la vez (hasta 200). La nota es opcional (hasta 500 caracteres). Cada decisión guarda quién la tomó, cuándo y la nota, y va a la bitácora del estudiante (`alert.postpone`, `alert.dismiss`). Si alguna de las elegidas ya no estaba abierta (otro admin la decidió o se cerró sola), se informa y las demás se deciden igual.
+**Decidir.** Cada fila tiene **✉️ Enviar** (abre la vista previa del correo, sección 10.16), **⏸ Posponer** y **✖ Descartar**; con las casillas se deciden varias a la vez (hasta 200). La nota es opcional (hasta 500 caracteres) y no va en el correo. Cada decisión guarda quién la tomó, cuándo y la nota, y va a la bitácora del estudiante (`alert.send`, `alert.postpone`, `alert.dismiss`). Si alguna de las elegidas ya no estaba abierta (otro admin la decidió o se cerró sola), se informa y las demás se deciden igual.
 
 **Historial:** las alertas decididas y las que se cerraron solas, de la más reciente a la más antigua, con el resultado, cuándo, quién y la nota.
 
@@ -936,7 +941,33 @@ Los estudiantes de prueba no entran. Hay una sola entrada abierta por estudiante
 | :--- | :--- |
 | `GET /api/admin/alerts?view=&cohort=&code=&search=&page=&limit=` | Revisa y lista una página (hasta 200). `view` es `pending` (por defecto), `postponed` o `history`. Trae el avance de cada estudiante, los totales por estado con el mismo filtro y el resumen general |
 | `GET /api/admin/alerts/summary` | Revisa y devuelve las pendientes (también por tipo) y las pospuestas, para el contador de la pestaña |
-| `POST /api/admin/alerts/decide` | `{ ids, action, days?, note? }`, con `action` `postpone` o `dismiss`. Responde el resultado de cada alerta; `404` si ninguna existe y `409` si ninguna estaba abierta |
+| `GET /api/admin/alerts/:id/preview` | El correo de refuerzo de esa alerta tal como lo recibiría el estudiante, y su límite de refuerzos |
+| `POST /api/admin/alerts/decide` | `{ ids, action, days?, note? }`, con `action` `send`, `postpone` o `dismiss`. Responde el resultado de cada alerta; si ninguna se pudo decidir: `404` si ninguna existe, `429` si todas chocaron con el límite de refuerzos y `409` en los demás casos |
+
+### 10.16 Correos de Refuerzo ([`server/services/reinforcement.js`](server/services/reinforcement.js))
+El refuerzo es un correo para que el estudiante retome; solo sale cuando el admin lo envía desde la bandeja de alertas.
+* **Vista previa:** **✉️ Enviar** abre el correo tal como lo recibirá el estudiante (destinatario, asunto y cuerpo), con cuántos refuerzos recibió en los últimos 7 días. Se confirma con **✉️ Enviar** y una nota interna opcional.
+* **En grupo:** con las casillas y **✉️ Enviar refuerzo**, cada estudiante recibe el correo de su tipo de alerta.
+* **Límite por estudiante:** uno cada 24 horas y dos por semana (`REINFORCEMENT_RULES`). Cuentan los refuerzos de la bandeja y el «🔔 Recordatorio» de la auditoría; los correos fallidos no cuentan. Una alerta que choca con el límite sigue pendiente y se informa el motivo (en grupo, el resto se envía igual). Así, si un estudiante tiene dos alertas, recibe un solo correo ese día.
+* **Envío seguro:** cada alerta se reserva en una transacción antes de encolar el correo (con bloqueo de fila en PostgreSQL), así dos admins no envían el mismo. Si el correo no se pudo encolar, la alerta vuelve a como estaba. No se envía a cuentas desactivadas.
+* **Registro:** el correo queda en `email_logs` (plantilla `reinforcement_<alerta>`, con el admin que lo envió) y enlazado a la alerta (`email_log_id`). En la bitácora, como `alert.send`. La ficha del estudiante lo muestra entre sus correos.
+
+**Plantillas.** Hay un texto por tipo de alerta: inactivo, atrasado, cierre cercano, minijuego difícil y sin intentos de examen. Se editan con **✏️ Plantillas de correo** en la bandeja:
+* asunto (una línea, hasta 150 caracteres) y texto (hasta 4000), con los párrafos separados por una línea en blanco;
+* variables entre llaves dobles, que se insertan con un clic: `{{nombre}}`, `{{promocion}}`, `{{avance}}`, `{{pasos_completados}}`, `{{pasos_totales}}`, `{{paso_actual}}`, `{{dias_sin_actividad}}`, `{{avance_esperado}}`, `{{fecha_cierre}}`, `{{dias_para_cierre}}`, `{{minijuego}}`, `{{partidas}}` y `{{enlace_curso}}`. Una variable desconocida se rechaza (`400`), y una sin valor para ese estudiante se muestra como «—»;
+* vista previa con datos de muestra, sin guardar;
+* **↺ Restaurar el texto original** borra la edición.
+
+Guardar y restaurar quedan en la bitácora (`template.update`, `template.restore`). El correo lleva el diseño institucional, el texto escapado y el botón «Ir a mi curso».
+
+**«Sin activar»** no tiene plantilla: su refuerzo reenvía la invitación con un enlace de activación nuevo (el anterior deja de servir). En la vista previa el enlace es de muestra, y solo se emite uno real al enviar.
+
+| Endpoint | Descripción |
+| :--- | :--- |
+| `GET /api/admin/reinforcement-templates` | Las plantillas vigentes (texto editado u original, quién y cuándo la editó), las variables y los límites |
+| `PUT /api/admin/reinforcement-templates/:code` | `{ subject, body }`. `400` si no es válida, `404` si ese tipo de alerta no tiene plantilla |
+| `DELETE /api/admin/reinforcement-templates/:code` | Vuelve al texto original |
+| `POST /api/admin/reinforcement-templates/:code/preview` | `{ subject, body }` sin guardar, con valores de muestra |
 
 ---
 
@@ -1157,10 +1188,10 @@ Microsoft 365 y Google Workspace restringen el SMTP con usuario y contraseña (e
 
 ## 13. Suite de Pruebas Automatizadas (Playwright)
 
-El proyecto cuenta con un conjunto integral de **130 pruebas E2E automatizadas** organizadas en **34 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
+El proyecto cuenta con un conjunto integral de **135 pruebas E2E automatizadas** organizadas en **35 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
 
 ```bash
-# Ejecutar todas las 34 suites E2E (130 pruebas) sobre la base de desarrollo (SQLite)
+# Ejecutar todas las 35 suites E2E (135 pruebas) sobre la base de desarrollo (SQLite)
 npx playwright test
 
 # La misma suite sobre un PostgreSQL 16 desechable (sin Docker; detén antes los servidores de desarrollo)
@@ -1250,6 +1281,7 @@ Las reglas que dependen del tiempo real (visualización mínima de videos y dura
 | **32** | **`32-simulator-error-detail.test.js`** | **Detalle de errores de las partidas:** validación pura (hasta 50 elementos, código normalizado, mensaje recortado a 200 caracteres, segundo redondeado a una décima; rechaza lo que no es lista, elementos que no son objetos y códigos con espacios) y lectura segura de lo guardado. Por la API: un detalle inválido responde 400, uno válido se guarda y la ficha lo devuelve, y una partida sin detalle (build anterior) se registra igual. En la página de práctica, con una página que sustituye a Unity, `SimulatorView` reenvía el detalle a la API, la partida suma +5 y la ficha del admin lista cada error con su segundo, código y mensaje. |
 | **33** | **`33-sqlite-safe-save.test.js`** | **Guardado seguro de la base SQLite** (sobre archivos temporales, nunca sobre `database.sqlite`). El guardado atómico escribe completo, reemplaza la versión anterior y no deja temporales. Cinco guardados simultáneos van en fila y gana el último, y uno que falla no bloquea a los siguientes. Un proceso que escribe 8 MiB sin parar se termina de golpe en tres momentos distintos, y el archivo queda siempre entero, con la versión anterior o la nueva; con la escritura directa de antes quedaba truncado. Una base truncada o un archivo que no es una base se detectan: `node server.js` termina con código 1, explica cómo recuperarse y no modifica el archivo. Un guardado que llega durante una transacción abierta espera a que termine y no la deshace. |
 | **34** | **`34-alert-inbox.test.js`** | **Bandeja de alertas.** Reglas puras: la clave por alerta y paso; el plan de la revisión (alertas nuevas, cambio de detalle, pospuestas que vuelven, alertas que se cierran solas y período de espera); la validación de las decisiones. Por la API: la revisión llena la bandeja sin el estudiante de prueba y sin duplicar entradas con dos revisiones a la vez. Posponer guarda fecha, quién y nota; descartar va a la bitácora. Decidir dos veces da 409, una alerta inexistente 404, una acción inválida 400, y un estudiante no puede decidir (403). La alerta descartada no vuelve durante la espera, y la pospuesta se cierra sola cuando el estudiante aprueba el minijuego. En grupo, las que ya no estaban abiertas se informan sin frenar el resto. En el panel: el contador de la pestaña, posponer con plazo y nota, descartar en grupo y el historial. |
+| **35** | **`35-reinforcement-emails.test.js`** | **Correos de refuerzo.** Reglas puras: las plantillas originales son válidas; validación del asunto, el texto y las variables; variables sin valor como «—»; valores tomados del estudiante y su alerta; la invitación de «Sin activar» sin emitir enlace en la vista previa. Por la API: la vista previa usa la plantilla y los datos del estudiante. Al enviar dos alertas del mismo estudiante, sale una y la otra queda pendiente por el límite de 24 horas (sola responde 429), y el «Recordatorio» de la auditoría también da 429. Quedan el historial con el estado del correo, la ficha y la bitácora, y una alerta enviada no se reenvía (409). A una cuenta desactivada no se le envía, y su alerta se cierra sola. Plantillas: inválidas dan 400, un código sin plantilla 404 y un estudiante 403; la editada se usa en la vista previa con datos de muestra y en el correo real, y se restaura el original con su bitácora. En el panel: vista previa y envío, el historial y el editor (vista previa, guardar y restaurar). |
 
 ---
 
