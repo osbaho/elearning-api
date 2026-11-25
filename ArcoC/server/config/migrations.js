@@ -343,4 +343,38 @@ export const MIGRATIONS = [
       await db.addColumnIfMissing('simulator_attempts', 'error_detail', 'TEXT');
     },
   },
+  {
+    version: 8,
+    name: 'bandeja_de_alertas',
+    // Fase 5: las alertas del seguimiento llegan a una bandeja donde el admin decide qué hacer con
+    // cada una (posponerla, descartarla o enviar un correo de refuerzo). Cada decisión queda con
+    // quién la tomó y cuándo; las alertas que dejan de cumplirse se cierran solas.
+    async up(db) {
+      const { id } = db.types;
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS alert_inbox (
+          id ${id},
+          student_id INTEGER NOT NULL,
+          alert_code TEXT NOT NULL,
+          alert_key TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          details TEXT,
+          first_seen_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          postponed_until TEXT,
+          decided_at TEXT,
+          decided_by_admin_id INTEGER,
+          decision_note TEXT,
+          email_log_id INTEGER,
+          resolved_at TEXT
+        )
+      `);
+      await db.run('CREATE INDEX IF NOT EXISTS idx_alert_inbox_status ON alert_inbox(status)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_alert_inbox_student ON alert_inbox(student_id)');
+      // Una sola entrada abierta por estudiante y alerta, también si dos revisiones corren a la vez
+      await db.run(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_alert_inbox_open ON alert_inbox(student_id, alert_key) WHERE status IN ('pending', 'postponed')"
+      );
+    },
+  },
 ];

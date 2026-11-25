@@ -122,6 +122,7 @@ ArcoC/
 │   │   ├── adminTestStudents.js   # Herramientas para estudiantes de prueba (reiniciar, llevar a un paso, copiar)
 │   │   ├── adminSupportCases.js   # Bandeja de casos reportados y respuesta al estudiante
 │   │   ├── adminReopen.js         # Reintentos auditados: reabrir un paso o conceder un intento del examen
+│   │   ├── adminAlerts.js         # Bandeja de alertas: revisar, posponer y descartar
 │   │   └── supportCases.js        # «Reportar un problema» del estudiante y sus reportes
 │   ├── utils/
 │   │   ├── certificate.js         # Generación de PDF (PDFKit) y validación pública
@@ -141,6 +142,7 @@ ArcoC/
 │   │   ├── testStudents.js        # Estudiantes de prueba: exclusión de estadísticas y herramientas
 │   │   ├── supportCases.js        # Validación y formato de los casos reportados
 │   │   ├── reopen.js              # Reabrir pasos: anular partidas, descontar puntos, intentos adicionales
+│   │   ├── alertInbox.js          # Bandeja de alertas: revisión, estados, período de espera y decisiones
 │   │   └── simulatorErrors.js     # Detalle de errores de cada partida que envía Unity (validación y lectura)
 │   └── scripts/
 │       ├── seed.js                # Inicialización de cuenta de Administrador
@@ -199,7 +201,7 @@ ArcoC/
     │   ├── loginHelper.js         # Utilidad de login y reset para tests
     │   ├── simulatorHelper.js     # Partidas del simulador y avance de pasos vía API
     │   └── adminHelper.js         # Sesión de admin en contexto propio, promociones y matrículas vía API
-    └── e2e/                       # 33 suites Playwright (ver sección 13)
+    └── e2e/                       # 34 suites Playwright (ver sección 13)
 ```
 
 En la raíz del monorepo, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) corre el lint del cliente y la suite E2E sobre SQLite y PostgreSQL (ver sección 13).
@@ -332,6 +334,9 @@ Historial de intentos del examen, una fila por intento:
 
 #### 12. `support_cases` (migración 5)
 Casos de «Reportar un problema» (sección 10.13): `student_id`, `step_id` (paso de la malla, `exam` o vacío), `category` (`video` | `minigame` | `exam` | `account` | `other`), `description`, `context` (JSON con URL, navegador y tamaño de ventana), `status` (`open` | `resolved` | `rejected`), `created_at`, `resolved_at`, `resolved_by_admin_id` y `resolution` (la respuesta que recibe el estudiante).
+
+#### 13. `alert_inbox` (migración 8)
+Bandeja de alertas (sección 10.15): `student_id`, `alert_code`, `alert_key` (el código, más el paso en las de minijuego, p. ej. `minigame_struggling:m1_s1`), `status` (`pending` | `postponed` | `sent` | `dismissed` | `resolved`), `details` (JSON de la alerta), `first_seen_at`, `updated_at`, `postponed_until` (AAAA-MM-DD), `decided_at`, `decided_by_admin_id`, `decision_note`, `email_log_id` (el correo de refuerzo, cuando se envía) y `resolved_at`. Un índice único parcial impide dos entradas abiertas (`pending` o `postponed`) del mismo estudiante y alerta.
 
 #### Columna agregada por la migración 7
 * `simulator_attempts.error_detail` (JSON): el detalle de errores que envía Unity con el resultado de la partida, `[{ code, message, atSeconds }]`, hasta 50. Las partidas de builds anteriores no lo tienen (sección 6, «Detalle de Errores de la Partida»).
@@ -771,7 +776,7 @@ El servidor calcula el seguimiento con lo que ya guarda la base: `course_progres
 
 El resumen (estudiantes, avance promedio, certificados y cuántos tienen alertas) cubre todo el filtro. «Solo con alertas» acota la lista, no los totales.
 
-**Alertas.** Son avisos para el admin y no envían correos; la bandeja y el refuerzo aprobado por el admin llegan en la Fase 5. Solo aplican a cuentas activas, no certificadas y con la promoción abierta:
+**Alertas.** Son avisos para el admin y no le envían nada al estudiante por sí solas: llegan a la bandeja de alertas (sección 10.15), donde el admin decide qué hacer con cada una. Solo aplican a cuentas activas, no certificadas y con la promoción abierta:
 
 | Alerta | Cuándo |
 | :--- | :--- |
@@ -901,6 +906,37 @@ Un resultado que llega para una partida anulada mientras se jugaba responde `409
 **Cuándo no se puede reabrir (`409`):** un video que no empezó, un minijuego sin partidas o el examen de quien ya aprobó. El motivo es obligatorio (`400`).
 
 **Límite de intentos del examen:** es `maxAttemptsFor(bonus)`, los 3 del reglamento más los concedidos. Lo usan `/api/start-exam`, `/api/student/me` (`exam.maxAttempts`, `exam.bonusAttempts`, `exam.attemptsLeft`), el seguimiento, la alerta de intentos agotados y el criterio 4 del estándar IES. En el criterio, los intentos concedidos cuentan como autorizados y se indica cuántos fueron. Es una decisión reversible, tomada el 2026-11-24.
+
+### 10.15 Bandeja de Alertas ([`server/services/alertInbox.js`](server/services/alertInbox.js))
+Las alertas del seguimiento (sección 10.10) llegan a una bandeja donde el admin decide qué hacer con cada una. Se abre con la pestaña **🔔 Alertas** del panel, que muestra cuántas hay pendientes. Usa los filtros del panel (promoción y búsqueda) y tiene un filtro por tipo de alerta.
+
+**Revisión.** Cada vez que el admin abre el panel o la bandeja, el servidor calcula las alertas vigentes de todos los estudiantes y actualiza la bandeja:
+* una alerta nueva entra como pendiente;
+* una que ya estaba abierta actualiza su detalle (por ejemplo, los días sin actividad);
+* una pospuesta cuya fecha llegó vuelve a pendientes;
+* una que deja de cumplirse antes de que se decida (el estudiante retomó, aprobó el minijuego…) se cierra sola y pasa al historial.
+
+Los estudiantes de prueba no entran. Hay una sola entrada abierta por estudiante y alerta, también si dos revisiones corren a la vez: la inserción comprueba en la misma sentencia y un índice único parcial lo garantiza.
+
+| Estado | Significado |
+| :--- | :--- |
+| Pendiente (`pending`) | Detectada; espera una decisión |
+| Pospuesta (`postponed`) | El admin la pospuso 1, 3, 7, 14 o 30 días; ese día vuelve a pendientes si sigue cumpliéndose |
+| Descartada (`dismissed`) | El admin decidió no actuar |
+| Correo enviado (`sent`) | Se envió un correo de refuerzo (lo agrega la parte 2 de la Fase 5) |
+| Se cerró sola (`resolved`) | Dejó de cumplirse antes de que se decidiera |
+
+**Período de espera:** una alerta descartada (o con correo enviado) no vuelve a la bandeja durante 7 días aunque siga cumpliéndose. Pasado ese plazo, si sigue vigente, vuelve como pendiente para revisarla otra vez (`INBOX_RULES.COOLDOWN_DAYS`).
+
+**Decidir.** Cada fila tiene **⏸ Posponer** y **✖ Descartar**; con las casillas se deciden varias a la vez (hasta 200). La nota es opcional (hasta 500 caracteres). Cada decisión guarda quién la tomó, cuándo y la nota, y va a la bitácora del estudiante (`alert.postpone`, `alert.dismiss`). Si alguna de las elegidas ya no estaba abierta (otro admin la decidió o se cerró sola), se informa y las demás se deciden igual.
+
+**Historial:** las alertas decididas y las que se cerraron solas, de la más reciente a la más antigua, con el resultado, cuándo, quién y la nota.
+
+| Endpoint | Descripción |
+| :--- | :--- |
+| `GET /api/admin/alerts?view=&cohort=&code=&search=&page=&limit=` | Revisa y lista una página (hasta 200). `view` es `pending` (por defecto), `postponed` o `history`. Trae el avance de cada estudiante, los totales por estado con el mismo filtro y el resumen general |
+| `GET /api/admin/alerts/summary` | Revisa y devuelve las pendientes (también por tipo) y las pospuestas, para el contador de la pestaña |
+| `POST /api/admin/alerts/decide` | `{ ids, action, days?, note? }`, con `action` `postpone` o `dismiss`. Responde el resultado de cada alerta; `404` si ninguna existe y `409` si ninguna estaba abierta |
 
 ---
 
@@ -1121,10 +1157,10 @@ Microsoft 365 y Google Workspace restringen el SMTP con usuario y contraseña (e
 
 ## 13. Suite de Pruebas Automatizadas (Playwright)
 
-El proyecto cuenta con un conjunto integral de **126 pruebas E2E automatizadas** organizadas en **33 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
+El proyecto cuenta con un conjunto integral de **130 pruebas E2E automatizadas** organizadas en **34 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
 
 ```bash
-# Ejecutar todas las 33 suites E2E (126 pruebas) sobre la base de desarrollo (SQLite)
+# Ejecutar todas las 34 suites E2E (130 pruebas) sobre la base de desarrollo (SQLite)
 npx playwright test
 
 # La misma suite sobre un PostgreSQL 16 desechable (sin Docker; detén antes los servidores de desarrollo)
@@ -1213,6 +1249,7 @@ Las reglas que dependen del tiempo real (visualización mínima de videos y dura
 | **31** | **`31-audited-retries.test.js`** | **Reintentos auditados:** qué pasos se pueden reabrir (función pura). Al reabrir un minijuego finalizado con dos partidas (15 pts), ambas quedan anuladas y se descuentan sus puntos; el paso queda pendiente y el siguiente sigue completado; sin una partida nueva no se finaliza, y la nueva vuelve a sumar 10. La ficha conserva las anuladas con su motivo, y quedan la bitácora y el correo. También se verifica que el motivo sea obligatorio (400), que un paso inválido dé 400, que un minijuego sin partidas dé 409 y que un estudiante no pueda reabrir (403). Un video reabierto deja de estar visto. Con 3 intentos usados, un intento concedido permite empezar otro (`maxAttempts` 4) y el criterio 4 del estándar IES lo da por autorizado; a quien aprobó no se le concede (409). En la ficha: «↺ Reabrir» con motivo deja el minijuego «Reabierto» y muestra sus partidas anuladas. |
 | **32** | **`32-simulator-error-detail.test.js`** | **Detalle de errores de las partidas:** validación pura (hasta 50 elementos, código normalizado, mensaje recortado a 200 caracteres, segundo redondeado a una décima; rechaza lo que no es lista, elementos que no son objetos y códigos con espacios) y lectura segura de lo guardado. Por la API: un detalle inválido responde 400, uno válido se guarda y la ficha lo devuelve, y una partida sin detalle (build anterior) se registra igual. En la página de práctica, con una página que sustituye a Unity, `SimulatorView` reenvía el detalle a la API, la partida suma +5 y la ficha del admin lista cada error con su segundo, código y mensaje. |
 | **33** | **`33-sqlite-safe-save.test.js`** | **Guardado seguro de la base SQLite** (sobre archivos temporales, nunca sobre `database.sqlite`). El guardado atómico escribe completo, reemplaza la versión anterior y no deja temporales. Cinco guardados simultáneos van en fila y gana el último, y uno que falla no bloquea a los siguientes. Un proceso que escribe 8 MiB sin parar se termina de golpe en tres momentos distintos, y el archivo queda siempre entero, con la versión anterior o la nueva; con la escritura directa de antes quedaba truncado. Una base truncada o un archivo que no es una base se detectan: `node server.js` termina con código 1, explica cómo recuperarse y no modifica el archivo. Un guardado que llega durante una transacción abierta espera a que termine y no la deshace. |
+| **34** | **`34-alert-inbox.test.js`** | **Bandeja de alertas.** Reglas puras: la clave por alerta y paso; el plan de la revisión (alertas nuevas, cambio de detalle, pospuestas que vuelven, alertas que se cierran solas y período de espera); la validación de las decisiones. Por la API: la revisión llena la bandeja sin el estudiante de prueba y sin duplicar entradas con dos revisiones a la vez. Posponer guarda fecha, quién y nota; descartar va a la bitácora. Decidir dos veces da 409, una alerta inexistente 404, una acción inválida 400, y un estudiante no puede decidir (403). La alerta descartada no vuelve durante la espera, y la pospuesta se cierra sola cuando el estudiante aprueba el minijuego. En grupo, las que ya no estaban abiertas se informan sin frenar el resto. En el panel: el contador de la pestaña, posponer con plazo y nota, descartar en grupo y el historial. |
 
 ---
 

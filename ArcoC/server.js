@@ -22,6 +22,7 @@ import adminTestStudentsRoutes from './server/routes/adminTestStudents.js';
 import supportCasesRoutes from './server/routes/supportCases.js';
 import adminSupportCasesRoutes from './server/routes/adminSupportCases.js';
 import adminReopenRoutes from './server/routes/adminReopen.js';
+import adminAlertsRoutes from './server/routes/adminAlerts.js';
 import progressRoutes from './server/routes/progress.js';
 import simulatorRoutes from './server/routes/simulator.js';
 import { COURSE_STEPS } from './server/config/curriculum.js';
@@ -144,6 +145,7 @@ app.use('/api/admin', adminProgressRoutes);
 app.use('/api/admin', adminTestStudentsRoutes);
 app.use('/api/admin', adminSupportCasesRoutes);
 app.use('/api/admin', adminReopenRoutes);
+app.use('/api/admin', adminAlertsRoutes);
 app.use('/api/progress', progressRoutes);
 app.use('/api/simulator', simulatorRoutes);
 
