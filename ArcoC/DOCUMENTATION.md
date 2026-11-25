@@ -101,6 +101,7 @@ ArcoC/
 ├── server/
 │   ├── config/
 │   │   ├── db.js                  # Abstracción dual SQLite/PostgreSQL y ejecución de migraciones
+│   │   ├── sqliteFile.js          # Guardado atómico del archivo SQLite y detección de una base dañada
 │   │   ├── migrations.js          # Migraciones versionadas del esquema (tabla schema_migrations)
 │   │   ├── curriculum.js          # Malla de 30 pasos: fuente única de verdad del servidor
 │   │   ├── examRules.js           # Reglas del examen: preguntas por intento, nota mínima, intentos, comodín
@@ -198,7 +199,7 @@ ArcoC/
     │   ├── loginHelper.js         # Utilidad de login y reset para tests
     │   ├── simulatorHelper.js     # Partidas del simulador y avance de pasos vía API
     │   └── adminHelper.js         # Sesión de admin en contexto propio, promociones y matrículas vía API
-    └── e2e/                       # 32 suites Playwright (ver sección 13)
+    └── e2e/                       # 33 suites Playwright (ver sección 13)
 ```
 
 En la raíz del monorepo, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) corre el lint del cliente y la suite E2E sobre SQLite y PostgreSQL (ver sección 13).
@@ -218,6 +219,13 @@ No hay Tailwind ni CSS por componente: todo el estilo vive en [`client/src/app/g
 La capa de datos ([`server/config/db.js`](file:///c:/Oscar/ArcoC/server/config/db.js)) implementa un wrapper agnóstico que permite alternar entre:
 1. **SQLite (`sql.js`):** Utilizado por defecto en desarrollo local. Se carga en memoria para velocidad ultra-rápida y persiste automáticamente a `database.sqlite` mediante debounce y en el evento de *graceful shutdown*.
 2. **PostgreSQL (`pg`):** Habilitado automáticamente cuando se define la variable `DATABASE_URL`. El conversor `convertSqlForPg` traduce los placeholders (`?` a `$1, $2...`); el resto del SQL se escribe en la sintaxis común a ambos motores (por ejemplo `INSERT ... ON CONFLICT (...) DO NOTHING`, nunca `INSERT OR IGNORE`, que solo existe en SQLite).
+
+### Guardado seguro del archivo SQLite ([`server/config/sqliteFile.js`](server/config/sqliteFile.js))
+sql.js trabaja en memoria y vuelca la base completa al archivo en cada guardado (500 ms después del último cambio, y al cerrar). Antes se escribía directamente sobre `database.sqlite`. Si el proceso se detenía a mitad de la escritura, el archivo quedaba truncado y la base no volvía a abrir («database disk image is malformed»). Pasa, por ejemplo, cuando Playwright cierra el servidor al terminar las pruebas, porque en Windows lo termina de golpe. Ocurrió el 2026-11-24: el archivo quedó en 2,5 MiB de los 2,9 que declaraba su cabecera.
+* **Atómico:** cada guardado se escribe completo en `database.sqlite.tmp`, se fuerza a disco y se renombra sobre el definitivo. El archivo siempre tiene una versión entera, la anterior o la nueva. En Windows el renombrado se reintenta si otro proceso tiene el archivo abierto un instante (antivirus, indexador). El `.tmp` está en `.gitignore` y `.dockerignore`.
+* **En fila:** los guardados no se pisan; cada uno toma el contenido cuando le toca, así que el último deja el estado más reciente.
+* **Sin deshacer transacciones:** `export()` de sql.js cierra y reabre la conexión, lo que desharía una transacción abierta (`withTransaction`) mientras su callback espera. El guardado espera a que la transacción termine.
+* **Base dañada al arrancar:** se revisa con `PRAGMA quick_check`. Si falla, el servidor no arranca, no modifica el archivo y explica cómo recuperarse (sección 13).
 
 ### Paridad entre SQLite y PostgreSQL
 Producción usa PostgreSQL; desarrollo, SQLite. Para que el comportamiento sea el mismo:
@@ -1113,10 +1121,10 @@ Microsoft 365 y Google Workspace restringen el SMTP con usuario y contraseña (e
 
 ## 13. Suite de Pruebas Automatizadas (Playwright)
 
-El proyecto cuenta con un conjunto integral de **122 pruebas E2E automatizadas** organizadas en **32 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
+El proyecto cuenta con un conjunto integral de **126 pruebas E2E automatizadas** organizadas en **33 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
 
 ```bash
-# Ejecutar todas las 32 suites E2E (122 pruebas) sobre la base de desarrollo (SQLite)
+# Ejecutar todas las 33 suites E2E (126 pruebas) sobre la base de desarrollo (SQLite)
 npx playwright test
 
 # La misma suite sobre un PostgreSQL 16 desechable (sin Docker; detén antes los servidores de desarrollo)
@@ -1140,6 +1148,12 @@ npx playwright test tests/e2e/16-student-spaced-interaction-flow.test.js
 ```
 
 **Base de datos para la suite:** basta con una BD recién creada con `npm run seed`, que crea al administrador. Los estudiantes de prueba los crea `POST /api/test-reset` cuando se necesitan (`server.js`, solo fuera de producción). Un estudiante recién creado queda en el mismo estado que uno existente reiniciado: onboarding completo, 150 Puntos de Reserva y sin progreso ni intentos de examen. Las pruebas que necesitan otro punto de partida lo piden explícitamente: los recorridos 15 y 16 empiezan con `is_onboarded: 0` y `reserve_points: 0`. Así, la primera pasada sobre una BD nueva da el mismo resultado que las siguientes. No hay un script para sembrar estudiantes: se retiraron `npm run seed:student` y `npm run clear`, que apuntaban a archivos inexistentes. La corrida sobre PostgreSQL y el CI agregan `npm run seed:questions` (banco oficial con ids 1–50). La base de desarrollo acumula estudiantes de cada corrida (las suites 23 y 24 crean los suyos con correos únicos) y el listado del admin trae los 100 más recientes: por eso las pruebas buscan a un estudiante por correo y no por su posición en la lista.
+
+**Si la base de desarrollo está dañada:** el servidor no arranca y lo dice («La base SQLite … está dañada»). Para recuperarte:
+1. Aparta el archivo sin borrarlo; por ejemplo, renómbralo a `database.danada-AAAA-MM-DD.sqlite`, que git ignora.
+2. Crea una base nueva con `npm run seed` y `npm run seed:questions`.
+
+Desde que el guardado es atómico (sección 3), detener el servidor ya no debería dañarla.
 
 **Tamaño del banco de preguntas:** la prueba de intentos sin repetir de la suite 26 lee el tamaño del banco desde `/api/admin/launch-readiness` y espera solo las repeticiones inevitables. Con el banco oficial (CI y `npm run test:pg`), los 3 intentos no comparten ninguna pregunta. Con las 5 preguntas iniciales de una base local, cada intento repite todas, que es lo correcto.
 
@@ -1198,6 +1212,7 @@ Las reglas que dependen del tiempo real (visualización mínima de videos y dura
 | **30** | **`30-support-cases.test.js`** | **Reportar un problema:** validaciones puras del reporte (categoría, paso, longitud, solo las claves conocidas del contexto) y de la respuesta. El estudiante reporta un minijuego; el admin no puede abrir casos ni el estudiante ver la bandeja (403); la bandeja trae el caso con su contexto; cerrarlo exige respuesta, un caso cerrado no se cierra de nuevo (409) y uno inexistente da 404; el estudiante ve la respuesta; quedan la bitácora (`case.resolve`), el correo `case_answered`, los reportes de la ficha y su línea de tiempo; con 5 casos abiertos el siguiente da 429. En el navegador: el estudiante reporta desde la tarjeta de un video (categoría preseleccionada) y lo ve en «Mis reportes»; el admin lo encuentra en la bandeja, lo resuelve y pasa a «Resueltos». |
 | **31** | **`31-audited-retries.test.js`** | **Reintentos auditados:** qué pasos se pueden reabrir (función pura). Al reabrir un minijuego finalizado con dos partidas (15 pts), ambas quedan anuladas y se descuentan sus puntos; el paso queda pendiente y el siguiente sigue completado; sin una partida nueva no se finaliza, y la nueva vuelve a sumar 10. La ficha conserva las anuladas con su motivo, y quedan la bitácora y el correo. También se verifica que el motivo sea obligatorio (400), que un paso inválido dé 400, que un minijuego sin partidas dé 409 y que un estudiante no pueda reabrir (403). Un video reabierto deja de estar visto. Con 3 intentos usados, un intento concedido permite empezar otro (`maxAttempts` 4) y el criterio 4 del estándar IES lo da por autorizado; a quien aprobó no se le concede (409). En la ficha: «↺ Reabrir» con motivo deja el minijuego «Reabierto» y muestra sus partidas anuladas. |
 | **32** | **`32-simulator-error-detail.test.js`** | **Detalle de errores de las partidas:** validación pura (hasta 50 elementos, código normalizado, mensaje recortado a 200 caracteres, segundo redondeado a una décima; rechaza lo que no es lista, elementos que no son objetos y códigos con espacios) y lectura segura de lo guardado. Por la API: un detalle inválido responde 400, uno válido se guarda y la ficha lo devuelve, y una partida sin detalle (build anterior) se registra igual. En la página de práctica, con una página que sustituye a Unity, `SimulatorView` reenvía el detalle a la API, la partida suma +5 y la ficha del admin lista cada error con su segundo, código y mensaje. |
+| **33** | **`33-sqlite-safe-save.test.js`** | **Guardado seguro de la base SQLite** (sobre archivos temporales, nunca sobre `database.sqlite`). El guardado atómico escribe completo, reemplaza la versión anterior y no deja temporales. Cinco guardados simultáneos van en fila y gana el último, y uno que falla no bloquea a los siguientes. Un proceso que escribe 8 MiB sin parar se termina de golpe en tres momentos distintos, y el archivo queda siempre entero, con la versión anterior o la nueva; con la escritura directa de antes quedaba truncado. Una base truncada o un archivo que no es una base se detectan: `node server.js` termina con código 1, explica cómo recuperarse y no modifica el archivo. Un guardado que llega durante una transacción abierta espera a que termine y no la deshace. |
 
 ---
 

@@ -4,6 +4,7 @@ import path from 'path';
 import pg from 'pg';
 import { fileURLToPath } from 'url';
 import { MIGRATIONS } from './migrations.js';
+import { damagedDatabaseMessage, queueFileWrite, sqliteIntegrityProblem } from './sqliteFile.js';
 
 const { Pool, types } = pg;
 const __filename = fileURLToPath(import.meta.url);
@@ -45,18 +46,27 @@ let pgPool;
 let schemaVersion = 0;
 
 let saveDebounceTimer = null;
+// Transacción de SQLite abierta (promesa que se resuelve al cerrarla). Mientras su callback espera,
+// exportar la base la desharía: export() de sql.js cierra y reabre la conexión.
+let openSqliteTransaction = null;
+
+/** Contenido actual de la base SQLite, esperando a que no haya una transacción abierta. */
+async function exportSqlite() {
+  while (openSqliteTransaction) await openSqliteTransaction;
+  return Buffer.from(sqliteDb.export());
+}
+
+/** Guarda la base SQLite en su archivo: atómico y en fila (ver sqliteFile.js). */
+function writeSqliteFile() {
+  return queueFileWrite(DB_PATH, exportSqlite);
+}
 
 export async function saveDb() {
   if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
-  saveDebounceTimer = setTimeout(async () => {
-    if (sqliteDb) {
-      const data = sqliteDb.export();
-      try {
-        await fs.promises.writeFile(DB_PATH, Buffer.from(data));
-      } catch (e) {
-        console.error('Error saving DB:', e);
-      }
-    }
+  saveDebounceTimer = setTimeout(() => {
+    saveDebounceTimer = null;
+    if (!sqliteDb) return;
+    writeSqliteFile().catch((e) => console.error('Error saving DB:', e));
   }, 500);
 }
 
@@ -153,6 +163,9 @@ export async function withTransaction(callback) {
       all: async (sql, params = []) => all(sql, params)
     };
     sqliteDb.run('BEGIN TRANSACTION;');
+    let closeTransaction;
+    const transaction = new Promise((resolve) => { closeTransaction = resolve; });
+    openSqliteTransaction = transaction;
     try {
       const result = await callback(tx);
       sqliteDb.run('COMMIT;');
@@ -161,6 +174,9 @@ export async function withTransaction(callback) {
     } catch (e) {
       sqliteDb.run('ROLLBACK;');
       throw e;
+    } finally {
+      if (openSqliteTransaction === transaction) openSqliteTransaction = null;
+      closeTransaction();
     }
   }
 }
@@ -263,7 +279,14 @@ export async function initDb() {
     const SQL = await initSqlJs();
     if (fs.existsSync(DB_PATH)) {
       const fileBuffer = fs.readFileSync(DB_PATH);
-      sqliteDb = new SQL.Database(fileBuffer);
+      const loaded = new SQL.Database(fileBuffer);
+      // Una base dañada no se toca: el servidor no arranca y explica cómo recuperarse
+      const problem = sqliteIntegrityProblem(loaded);
+      if (problem) {
+        loaded.close();
+        throw new Error(damagedDatabaseMessage(DB_PATH, problem));
+      }
+      sqliteDb = loaded;
       console.log('📂 Database loaded from disk (SQLite).');
     } else {
       sqliteDb = new SQL.Database();
@@ -375,7 +398,7 @@ export async function closeDb() {
   if (sqliteDb) {
     if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
     saveDebounceTimer = null;
-    await fs.promises.writeFile(DB_PATH, Buffer.from(sqliteDb.export()));
+    await writeSqliteFile();
   }
 }
 
