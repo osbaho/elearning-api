@@ -4,6 +4,7 @@ import { authenticateToken } from '../middleware/auth.js';
 import { requireOpenAccess } from '../services/access.js';
 import { isPreviewUser } from '../services/preview.js';
 import { isCourseStep, isPracticeStep, isVideoStep, minWatchSecondsFor, previousStepOf } from '../config/curriculum.js';
+import { parseVideoPosition } from '../services/videoResume.js';
 
 const router = express.Router();
 
@@ -122,6 +123,65 @@ router.post('/:moduleId', authenticateToken, requireOpenAccess, async (req, res)
     res.json({ success: true });
   } catch (err) {
     console.error('Progress error:', err);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /api/progress/:moduleId/position — dónde quedó el estudiante en un video (para retomarlo)
+router.get('/:moduleId/position', authenticateToken, async (req, res) => {
+  try {
+    const { moduleId } = req.params;
+    if (!isVideoStep(moduleId)) return res.status(400).json({ error: 'Solo los videos del curso guardan su posición.' });
+    if (isPreviewUser(req)) return res.json({ stepId: moduleId, position: 0, maxWatched: 0, preview: true });
+    const view = await get(
+      'SELECT last_position_seconds, max_watched_seconds, position_updated_at FROM video_views WHERE student_id = ? AND step_id = ?',
+      [req.user.id, moduleId]
+    );
+    res.json({
+      stepId: moduleId,
+      position: Number(view?.last_position_seconds) || 0,
+      maxWatched: Number(view?.max_watched_seconds) || 0,
+      updatedAt: view?.position_updated_at || null,
+    });
+  } catch (err) {
+    console.error('Video position read error:', err);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/progress/:moduleId/position — guarda la posición y hasta dónde llegó (el máximo no baja).
+// Es solo para retomar: no exige la promoción abierta ni cuenta como visto.
+router.post('/:moduleId/position', authenticateToken, async (req, res) => {
+  try {
+    const { moduleId } = req.params;
+    if (!isVideoStep(moduleId)) return res.status(400).json({ error: 'Solo los videos del curso guardan su posición.' });
+    const parsed = parseVideoPosition(req.body);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    if (isPreviewUser(req)) return res.json({ stepId: moduleId, preview: true });
+    const blocked = await sequenceBlockMessage(req.user.id, moduleId);
+    if (blocked) return res.status(403).json({ error: blocked });
+
+    const nowIso = new Date().toISOString();
+    const { position, maxWatched } = parsed.value;
+    await run(
+      `INSERT INTO video_views (student_id, step_id, started_at, last_position_seconds, max_watched_seconds, position_updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (student_id, step_id) DO UPDATE SET
+         last_position_seconds = excluded.last_position_seconds,
+         max_watched_seconds = CASE
+           WHEN COALESCE(video_views.max_watched_seconds, 0) > excluded.max_watched_seconds THEN video_views.max_watched_seconds
+           ELSE excluded.max_watched_seconds
+         END,
+         position_updated_at = excluded.position_updated_at`,
+      [req.user.id, moduleId, nowIso, position, maxWatched, nowIso]
+    );
+    const view = await get(
+      'SELECT last_position_seconds, max_watched_seconds FROM video_views WHERE student_id = ? AND step_id = ?',
+      [req.user.id, moduleId]
+    );
+    res.json({ stepId: moduleId, position: Number(view?.last_position_seconds) || 0, maxWatched: Number(view?.max_watched_seconds) || 0 });
+  } catch (err) {
+    console.error('Video position save error:', err);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

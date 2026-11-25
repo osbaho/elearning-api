@@ -394,4 +394,15 @@ export const MIGRATIONS = [
       `);
     },
   },
+  {
+    version: 10,
+    name: 'retomar_videos',
+    // Fase 6: el video retoma donde lo dejó el estudiante, en cualquier dispositivo. Se guarda la
+    // última posición y hasta dónde lo vio (el bloqueo de adelanto se mantiene con ese dato).
+    async up(db) {
+      await db.addColumnIfMissing('video_views', 'last_position_seconds', 'REAL');
+      await db.addColumnIfMissing('video_views', 'max_watched_seconds', 'REAL');
+      await db.addColumnIfMissing('video_views', 'position_updated_at', 'TEXT');
+    },
+  },
 ];

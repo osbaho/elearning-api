@@ -146,6 +146,7 @@ ArcoC/
 │   │   ├── reopen.js              # Reabrir pasos: anular partidas, descontar puntos, intentos adicionales
 │   │   ├── alertInbox.js          # Bandeja de alertas: revisión, estados, período de espera y decisiones
 │   │   ├── studentProgress.js     # «Mi progreso»: avance, puntajes, historial de puntos, examen y datos
+│   │   ├── videoResume.js         # Retomar videos: validación de la posición guardada
 │   │   ├── reinforcement.js       # Correos de refuerzo: plantillas, valores, límite por estudiante y envío
 │   │   └── simulatorErrors.js     # Detalle de errores de cada partida que envía Unity (validación y lectura)
 │   └── scripts/
@@ -210,7 +211,7 @@ ArcoC/
     │   ├── loginHelper.js         # Utilidad de login y reset para tests
     │   ├── simulatorHelper.js     # Partidas del simulador y avance de pasos vía API
     │   └── adminHelper.js         # Sesión de admin en contexto propio, promociones y matrículas vía API
-    └── e2e/                       # 37 suites Playwright (ver sección 13)
+    └── e2e/                       # 38 suites Playwright (ver sección 13)
 ```
 
 En la raíz del monorepo, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) corre el lint del cliente y la suite E2E sobre SQLite y PostgreSQL (ver sección 13).
@@ -353,6 +354,9 @@ Historial de intentos del examen, una fila por intento:
 #### 12. `support_cases` (migración 5)
 Casos de «Reportar un problema» (sección 10.13): `student_id`, `step_id` (paso de la malla, `exam` o vacío), `category` (`video` | `minigame` | `exam` | `account` | `other`), `description`, `context` (JSON con URL, navegador y tamaño de ventana), `status` (`open` | `resolved` | `rejected`), `created_at`, `resolved_at`, `resolved_by_admin_id` y `resolution` (la respuesta que recibe el estudiante).
 
+#### Columnas agregadas por la migración 10
+* `video_views`: `last_position_seconds`, `max_watched_seconds` y `position_updated_at`, para retomar cada video donde quedó el estudiante (sección 5).
+
 #### 14. `reinforcement_templates` (migración 9)
 Texto editado de los correos de refuerzo (sección 10.16): `alert_code` (clave), `subject`, `body`, `updated_at` y `updated_by_admin_id`. Sin fila, se usa el texto original de `server/config/reinforcementTemplates.js`; borrar la fila lo restaura.
 
@@ -444,6 +448,11 @@ El endpoint `POST /api/progress/:moduleId` valida en el servidor la lista ordena
 * **Condición de Finalización:** El callback `onComplete` únicamente se dispara cuando el usuario ha reproducido al menos el **90%** de la duración del video de forma continua. Si la API rechaza el registro, la página lo avisa con el motivo.
 * **Tiempo mínimo en servidor (producción):** el bloqueo de adelanto ocurre en el navegador, así que la API no confía solo en él. Al primer *play*, el reproductor llama a `POST /api/progress/:moduleId/start` (queda en `video_views`). En producción, `POST /api/progress/:moduleId` de un video solo se acepta si desde ese inicio pasó el tiempo de verlo al 90 % a 2x, la velocidad máxima del reproductor, menos 5 s de margen: `⌊duración × 0,9 / 2 − 5⌋` segundos (73 s para el video 1 del módulo 1). Sin inicio registrado o antes de tiempo responde `403` con lo que falta. En desarrollo y en los tests no se aplica, para poder avanzar la malla sin esperar.
 * **Duraciones:** viven en `VIDEO_DURATION_SECONDS` de [`server/config/curriculum.js`](server/config/curriculum.js). `scripts/prepare-module-videos.ps1` las imprime listas para copiar. `null` marca un video pendiente: así lo cuenta la preparación del lanzamiento. El test E2E 19 exige que los del módulo 1 tengan duración.
+* **Retomar donde quedó** ([`server/services/videoResume.js`](server/services/videoResume.js)): el reproductor guarda la posición cada 10 s mientras se reproduce, al pausar, al terminar y al salir de la página (`POST /api/progress/:moduleId/position`, `{ position, maxWatched }`). Al volver, en cualquier dispositivo, retoma ahí (`GET`) y avisa «Retomas en 1:23, donde lo dejaste», con **Ver desde el inicio**. Si había quedado a menos de 3 s del final, empieza de nuevo.
+  * Hasta dónde llegó (`maxWatched`) nunca baja. Con ese dato el bloqueo de adelanto deja moverse por lo ya visto, no más allá.
+  * Solo sirve para retomar: no cuenta como visto ni reemplaza el tiempo mínimo del servidor, así que un valor inflado no sirve para saltarse el video. Por eso no exige la promoción abierta.
+  * Respeta la secuencia (`403` si el video está bloqueado). El modo revisión del admin no guarda nada, y abrir el curso sin reproducir no marca el video como empezado.
+* **Subtítulos:** el reproductor muestra una pista WebVTT en español si el paso declara `captionsSrc` en `client/src/lib/courseConfig.js` (por ejemplo `captionsSrc: '/videos/modulo1/M01_V01_SER.vtt'`). El archivo va junto al video, en `client/public/videos/moduloN/`, protegido con la misma sesión. HeyGen exporta los subtítulos en SRT o VTT; un SRT se convierte a VTT cambiando la coma de los milisegundos por punto y agregando la cabecera `WEBVTT`. Hoy ningún video los declara.
 
 ---
 
@@ -537,7 +546,7 @@ La regla es una función pura, `attemptBlockReason(stepId, { production })`, que
 
 ### Cómo incorporar el siguiente módulo (proceso repetible)
 1. **Videos:** dejar los masters `M0N_V0k_Master_<Tema>.mp4` en la carpeta de masters y ejecutar `scripts/prepare-module-videos.ps1 -Module N -SourceDir <carpeta>`.
-2. **Malla:** los pasos del módulo ya existen (6 por módulo). Reemplazar los `null` de `VIDEO_DURATION_SECONDS` en `server/config/curriculum.js` por las duraciones que imprimió el script, y en `client/src/lib/courseConfig.js` poner títulos, descripciones y `videoSrc: '/videos/moduloN/...'`.
+2. **Malla:** los pasos del módulo ya existen (6 por módulo). Reemplazar los `null` de `VIDEO_DURATION_SECONDS` en `server/config/curriculum.js` por las duraciones que imprimió el script, y en `client/src/lib/courseConfig.js` poner títulos, descripciones y `videoSrc: '/videos/moduloN/...'`. Si hay subtítulos, agrega también `captionsSrc` con su `.vtt`.
 3. **Unity:** crear la escena del módulo en el mismo proyecto con el nombre estándar `ModuloNN` (`Assets/Scenes/Modulo02.unity`, …), añadirla a Build Settings y fijar sus fases (1..3) en `CArmUIController`/escena. Si la plataforma pide una escena que no está en el build, Unity se queda en la escena inicial y lo anota en la consola (`WebSceneRouter`).
 4. **Catálogo:** en `simulatorCatalog.js`, ajustar `scene`, `minigameId` y `title` de cada `mN_sK` y poner `ready: true`.
 5. **Build:** en Unity, menú **CArm → Build WebGL para ArcoC** (genera `client/public/webgl`).
@@ -1230,10 +1239,10 @@ Microsoft 365 y Google Workspace restringen el SMTP con usuario y contraseña (e
 
 ## 13. Suite de Pruebas Automatizadas (Playwright)
 
-El proyecto cuenta con un conjunto integral de **146 pruebas E2E automatizadas** organizadas en **37 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
+El proyecto cuenta con un conjunto integral de **150 pruebas E2E automatizadas** organizadas en **38 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
 
 ```bash
-# Ejecutar todas las 37 suites E2E (146 pruebas) sobre la base de desarrollo (SQLite)
+# Ejecutar todas las 38 suites E2E (150 pruebas) sobre la base de desarrollo (SQLite)
 npx playwright test
 
 # La misma suite sobre un PostgreSQL 16 desechable (sin Docker; detén antes los servidores de desarrollo)
@@ -1326,6 +1335,7 @@ Las reglas que dependen del tiempo real (visualización mínima de videos y dura
 | **35** | **`35-reinforcement-emails.test.js`** | **Correos de refuerzo.** Reglas puras: las plantillas originales son válidas; validación del asunto, el texto y las variables; variables sin valor como «—»; valores tomados del estudiante y su alerta; la invitación de «Sin activar» sin emitir enlace en la vista previa. Por la API: la vista previa usa la plantilla y los datos del estudiante. Al enviar dos alertas del mismo estudiante, sale una y la otra queda pendiente por el límite de 24 horas (sola responde 429), y el «Recordatorio» de la auditoría también da 429. Quedan el historial con el estado del correo, la ficha y la bitácora, y una alerta enviada no se reenvía (409). A una cuenta desactivada no se le envía, y su alerta se cierra sola. Plantillas: inválidas dan 400, un código sin plantilla 404 y un estudiante 403; la editada se usa en la vista previa con datos de muestra y en el correo real, y se restaura el original con su bitácora. En el panel: vista previa y envío, el historial y el editor (vista previa, guardar y restaurar). |
 | **36** | **`36-student-fixes.test.js`** | **Correcciones del perfil del estudiante (Fase 6).** La ruta de cada cuadro de la supervisión (worker libre, worker ocupado, worker caído, sin worker y detección en curso). Toda clase del marcado tiene estilos, salvo los ganchos del recorrido guiado. En la práctica, el subtítulo queda alineado con el título. A 390 px, el encabezado del estudiante y del admin no se desborda y la página no se desplaza a lo ancho. Y un examen con la cámara simulada del navegador (sin `skipCamera`): la supervisión analiza cuadros («Rostro no detectado») sin errores del hilo principal en la consola. |
 | **37** | **`37-my-progress.test.js`** | **Mi progreso y preguntas frecuentes.** Reglas puras: el costo de cada comodín y el resumen del historial de puntos, ordenado y con el ajuste después de la partida dentro del mismo segundo. Por la API: avance (3/30), paso actual, mejor nivel, partidas y puntos de cada minijuego, historial de puntos y datos de la cuenta, sin lo que es solo del admin. Al reabrir el minijuego se descuentan sus puntos con el motivo y sus partidas quedan anuladas. Un comodín del examen aparece como gasto y los puntos iniciales como ajuste. El admin recibe 403 y sin sesión, 401. En el curso: la página muestra el resumen, los pasos, los movimientos de puntos, las reglas del examen y los datos, y «Solicitar una corrección» abre un reporte de cuenta. Las preguntas frecuentes usan las reglas vigentes del examen. |
+| **38** | **`38-video-resume.test.js`** | **Retomar videos.** Validación pura de la posición: redondeo, la posición cuenta como mínimo de lo visto y valores inválidos. Por la API: guarda la posición; hasta dónde llegó nunca baja al volver atrás; responde 400 para valores inválidos y pasos que no son videos, 403 para un video bloqueado, y el admin en revisión no guarda nada. En el curso: el video ofrece retomar en la posición guardada; moverse por lo ya visto se permite y más allá se bloquea; «Ver desde el inicio» quita el aviso. Abrir el curso sin reproducir no marca el video como empezado. |
 
 ---
 

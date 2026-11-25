@@ -3084,3 +3084,14 @@ main {
     position: relative;
   }
 }
+
+/* Aviso para retomar un video donde quedó el estudiante (Fase 6) */
+.video-resume-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}

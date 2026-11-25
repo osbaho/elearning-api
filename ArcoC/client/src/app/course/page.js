@@ -364,6 +364,7 @@ export default function Course() {
                         isCompleted={isCompleted}
                         isLocked={isLocked}
                         videoSrc={item.videoSrc}
+                        captionsSrc={item.captionsSrc}
                         moduleKey={item.key}
                         onComplete={() => handleMarkVideo(item.key)}
                         onStart={() => handleStartVideo(item.key)}
