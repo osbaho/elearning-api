@@ -2839,3 +2839,169 @@ main {
 .container.container-wide {
   max-width: 1440px;
 }
+
+/* ─── Fase 6: estilos que el marcado usaba sin estar definidos ───────────────── */
+
+/* Encabezado de una página interior (práctica): título y subtítulo alineados a la izquierda.
+   .hero-subtitle viene centrado para la portada; aquí va con el título. */
+.hero-title {
+  font-size: clamp(1.6rem, 3.2vw, 2.2rem);
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.5px;
+  margin: 0 0 12px;
+  color: var(--text-primary);
+}
+
+.page-header .hero-subtitle {
+  margin: 0;
+  max-width: 760px;
+}
+
+/* Insignia pequeña */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge-cyan {
+  background: rgba(0, 212, 255, 0.1);
+  border-color: rgba(0, 212, 255, 0.35);
+  color: var(--accent-cyan);
+}
+
+/* Atlas clínico de la práctica: tarjeta que amplía la imagen (también con el teclado) */
+.atlas-card {
+  cursor: pointer;
+  border: 1px solid rgba(0, 240, 255, 0.2);
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(10, 15, 30, 0.6);
+  transition: transform 0.2s, border-color 0.2s;
+}
+
+.atlas-card:hover,
+.atlas-card:focus-visible {
+  transform: translateY(-2px);
+  border-color: rgba(0, 240, 255, 0.55);
+  outline: none;
+}
+
+/* Marco del simulador Unity */
+.simulator-frame-wrapper {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 240, 255, 0.2);
+  background: #0a0f1e;
+}
+
+/* Tipografía base del documento (layout.js) */
+.font-sans {
+  font-family: var(--font-inter, 'Inter', sans-serif);
+}
+
+.antialiased {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Veredicto del estándar IES (antes usaba clases de Tailwind que el proyecto no tiene) */
+.verdict-banner.ok {
+  background: rgba(0, 230, 118, 0.1);
+  border-color: rgba(0, 230, 118, 0.45);
+  color: var(--accent-green);
+}
+
+.verdict-banner.fail {
+  background: rgba(255, 23, 68, 0.1);
+  border-color: rgba(255, 23, 68, 0.45);
+  color: var(--accent-red);
+}
+
+/* Móvil: el encabezado crece a dos líneas en vez de desbordarse, y los avisos van abajo para no
+   taparlo. */
+@media (max-width: 640px) {
+  .modern-header {
+    height: auto;
+    min-height: var(--header-height);
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  .header-inner {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    column-gap: 12px;
+  }
+
+  .header-nav {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    row-gap: 4px;
+    margin-left: auto;
+  }
+
+  .toast-container {
+    top: auto;
+    bottom: 16px;
+  }
+}
+
+/* Curso en pantallas angostas: el menú de módulos pasa arriba como una fila de botones (antes
+   ocupaba 280 px fijos y al contenido le quedaban unos 50 px en un teléfono). */
+@media (max-width: 900px) {
+  .course-layout-container {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+  }
+
+  .course-sidebar {
+    width: 100%;
+    position: static;
+    padding: 12px;
+  }
+
+  .course-sidebar .sidebar-title {
+    display: none;
+  }
+
+  .course-sidebar-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  /* Los grupos del menú (examen, guía y reportes) se suman a la misma fila */
+  .course-sidebar-nav > div {
+    display: contents;
+  }
+
+  .course-sidebar-nav .sidebar-nav-btn {
+    width: auto;
+    margin: 0;
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+
+  /* Un botón con texto largo (p. ej. «Continuar donde quedé…») se ajusta al ancho */
+  .course-hero-container .btn,
+  .course-main-content .btn {
+    white-space: normal;
+    max-width: 100%;
+    text-align: center;
+  }
+}
+
+/* El resplandor decorativo de la portada no puede ser más ancho que la pantalla (en un teléfono
+   ensanchaba la página 105 px por lado) */
+.hero::after {
+  width: min(600px, 100%);
+}

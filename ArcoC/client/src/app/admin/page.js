@@ -1086,11 +1086,7 @@ export default function AdminPage() {
               ) : complianceData ? (
                 <div>
                   {/* Banner de Veredicto Principal */}
-                  <div className={`p-16 rounded mb-20 text-center border ${
-                    complianceData.allMet 
-                      ? 'bg-green/10 border-green text-green' 
-                      : 'bg-red/10 border-red text-red'
-                  }`}>
+                  <div className={`verdict-banner p-16 rounded mb-20 text-center border ${complianceData.allMet ? 'ok' : 'fail'}`}>
                     <div className="text-2xl mb-4">{complianceData.allMet ? '🏆' : '⚠️'}</div>
                     <h4 className="title-md m-0 mb-4 font-bold" id="compliance-verdict-title">
                       {complianceData.verdict}

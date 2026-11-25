@@ -402,7 +402,6 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
       return (
         <div
           className="simulator-frame-wrapper"
-          style={{ position: 'relative', borderRadius: '8px', overflow: 'hidden', border: '1px solid rgba(0,240,255,0.2)', background: '#0a0f1e' }}
         >
           <iframe
             key={attempt.attemptId}
@@ -445,8 +444,8 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
   };
 
   return (
-    <div className="container simulator-container py-course">
-      <div className="mb-32">
+    <div className="container py-course">
+      <div className="page-header mb-32">
         <div className="hero-badge mb-16">🎮 Práctica Interactiva</div>
         <h1 className="hero-title">{title}</h1>
         {subtitle && <p className="hero-subtitle">{subtitle}</p>}
@@ -558,16 +557,17 @@ export default function SimulatorView({ moduleId, title, subtitle }) {
                 {guideData.images.map((img, idx) => (
                   <div
                     key={idx}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Ampliar: ${img.title}`}
                     onClick={() => setSelectedImage(img)}
-                    style={{
-                      cursor: 'pointer',
-                      border: '1px solid rgba(0, 240, 255, 0.2)',
-                      borderRadius: '8px',
-                      overflow: 'hidden',
-                      background: 'rgba(10, 15, 30, 0.6)',
-                      transition: 'transform 0.2s, border-color 0.2s'
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setSelectedImage(img);
+                      }
                     }}
-                    className="hover-card"
+                    className="atlas-card"
                   >
                     <div style={{ height: '140px', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000' }}>
                       <img

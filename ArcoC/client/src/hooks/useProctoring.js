@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import { loadFaceApi } from '../lib/faceApi';
+import { frameRoute } from '../lib/proctoringFrames';
+
+// Si el servidor no entrega el descriptor facial a tiempo, el examen arranca sin comparación de
+// identidad en lugar de quedarse esperando.
+const DESCRIPTOR_TIMEOUT_MS = 8000;
 
 export function useProctoring() {
   const videoRef = useRef(null);
@@ -17,11 +22,14 @@ export function useProctoring() {
   const examSuspendedRef = useRef(false);
 
   // Use refs for flags that must be stable across re-renders (A-09)
-  const isModelLoadedRef = useRef(false);
   const registeredDescriptorRef = useRef(null); // Loaded from API endpoint (I-04)
   const workerRef = useRef(null);
   const isWorkerReadyRef = useRef(false);
-  const isProcessingFrameRef = useRef(false);
+  // Momento en que se envió al worker el cuadro que aún no responde (null = libre)
+  const workerBusySinceRef = useRef(null);
+  // Modelos del hilo principal (respaldo sin worker): se cargan aparte de los del worker
+  const mainModelsLoadedRef = useRef(false);
+  const mainDetectingRef = useRef(false);
   // La sesión de supervisión en el servidor ('start_exam') se abre con el primer latido real,
   // cuando la cámara y los modelos ya funcionan, para no contar como pérdida de señal la carga inicial.
   const serverSessionRef = useRef(false);
@@ -105,19 +113,21 @@ export function useProctoring() {
   );
   const isMockMode = DEV_MOCK_CAMERA;
 
-  // Fallback: cargar modelos de face-api en el hilo principal si el worker no está disponible
+  // Respaldo sin worker: cargar los modelos de face-api en el hilo principal. Devuelve si quedaron
+  // listos. Los del worker no sirven aquí: cada hilo tiene los suyos.
   const ensureMainThreadModels = useCallback(async () => {
-    if (!isModelLoadedRef.current) {
-      try {
-        const faceapi = await loadFaceApi();
-        await faceapi.nets.tinyFaceDetector.loadFromUri('/models');
-        await faceapi.nets.faceLandmark68Net.loadFromUri('/models');
-        await faceapi.nets.faceRecognitionNet.loadFromUri('/models');
-        setIsModelLoaded(true);
-        isModelLoadedRef.current = true;
-      } catch (err) {
-        console.error('Error loading face-api models on main thread', err);
-      }
+    if (mainModelsLoadedRef.current) return true;
+    try {
+      const faceapi = await loadFaceApi();
+      await faceapi.nets.tinyFaceDetector.loadFromUri('/models');
+      await faceapi.nets.faceLandmark68Net.loadFromUri('/models');
+      await faceapi.nets.faceRecognitionNet.loadFromUri('/models');
+      mainModelsLoadedRef.current = true;
+      setIsModelLoaded(true);
+      return true;
+    } catch (err) {
+      console.error('Error loading face-api models on main thread', err);
+      return false;
     }
   }, []);
 
@@ -125,9 +135,12 @@ export function useProctoring() {
   const startProctoring = useCallback(async () => {
     // I-04: Load face descriptor from protected API endpoint (not from user state which strips it)
     if (!registeredDescriptorRef.current) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), DESCRIPTOR_TIMEOUT_MS);
       try {
         const resp = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/student/descriptor`, {
-          credentials: 'include'
+          credentials: 'include',
+          signal: controller.signal
         });
         if (resp.ok) {
           const { descriptor } = await resp.json();
@@ -137,6 +150,8 @@ export function useProctoring() {
         }
       } catch (e) {
         console.warn('Could not fetch face descriptor:', e.message);
+      } finally {
+        clearTimeout(timer);
       }
     }
 
@@ -151,12 +166,11 @@ export function useProctoring() {
           if (type === 'INIT_SUCCESS') {
             isWorkerReadyRef.current = true;
             setIsModelLoaded(true);
-            isModelLoadedRef.current = true;
           } else if (type === 'INIT_ERROR') {
             console.warn('[Proctoring Worker] Init error, will fallback to main thread:', error);
             isWorkerReadyRef.current = false;
           } else if (type === 'FRAME_PROCESSED') {
-            isProcessingFrameRef.current = false;
+            workerBusySinceRef.current = null;
             const detected = !!hasFace;
             // Sin descriptor registrado no hay con qué comparar: identidad "no evaluable" (null)
             const matched = registeredDescriptorRef.current ? !!match : null;
@@ -169,7 +183,7 @@ export function useProctoring() {
         worker.onerror = (err) => {
           console.warn('[Proctoring Worker] Runtime error, falling back to main thread', err);
           isWorkerReadyRef.current = false;
-          isProcessingFrameRef.current = false;
+          workerBusySinceRef.current = null;
         };
 
         worker.postMessage({
@@ -216,31 +230,46 @@ export function useProctoring() {
         heartbeatInterval.current = setInterval(async () => {
           if (!videoEl || examSuspendedRef.current) return;
 
-          // RUTA 1: Procesamiento Tensorial en Web Worker (Offload de Hilo Principal)
-          if (isWorkerReadyRef.current && workerRef.current && !isProcessingFrameRef.current) {
-            try {
-              isProcessingFrameRef.current = true;
-              if (typeof createImageBitmap === 'function') {
-                const bitmap = await createImageBitmap(videoEl);
-                workerRef.current.postMessage({
-                  type: 'PROCESS_FRAME',
-                  payload: { imageBitmap: bitmap }
-                }, [bitmap]);
-                return;
-              }
-            } catch (frameErr) {
-              console.warn('[Proctoring] Error capturing bitmap for worker:', frameErr);
-              isProcessingFrameRef.current = false;
+          const route = frameRoute({
+            workerReady: isWorkerReadyRef.current && Boolean(workerRef.current) && typeof createImageBitmap === 'function',
+            workerBusySince: workerBusySinceRef.current,
+            mainBusy: mainDetectingRef.current,
+            now: Date.now(),
+          });
+          // El worker o el hilo principal siguen con el cuadro anterior: este ciclo no hace nada
+          if (route === 'wait' || route === 'skip') return;
+
+          if (route === 'reset') {
+            console.warn('[Proctoring] El worker no respondió a tiempo; se continúa en el hilo principal.');
+            isWorkerReadyRef.current = false;
+            workerBusySinceRef.current = null;
+            if (workerRef.current) {
+              workerRef.current.terminate();
+              workerRef.current = null;
             }
           }
 
-          // RUTA 2: Fallback al hilo principal si el Web Worker no está listo o no es soportado
-          if (!isModelLoadedRef.current) {
-            await ensureMainThreadModels();
+          // RUTA 1: Procesamiento Tensorial en Web Worker (Offload de Hilo Principal)
+          if (route === 'worker') {
+            workerBusySinceRef.current = Date.now();
+            try {
+              const bitmap = await createImageBitmap(videoEl);
+              workerRef.current.postMessage({
+                type: 'PROCESS_FRAME',
+                payload: { imageBitmap: bitmap }
+              }, [bitmap]);
+            } catch (frameErr) {
+              // El próximo ciclo lo intenta de nuevo
+              console.warn('[Proctoring] Error capturing bitmap for worker:', frameErr);
+              workerBusySinceRef.current = null;
+            }
+            return;
           }
 
-          if (isModelLoadedRef.current) {
-            try {
+          // RUTA 2: hilo principal (sin worker, o el worker se dio por caído)
+          mainDetectingRef.current = true;
+          try {
+            if (await ensureMainThreadModels()) {
               const faceapi = await loadFaceApi();
               const detection = await faceapi.detectSingleFace(videoEl, new faceapi.TinyFaceDetectorOptions())
                                              .withFaceLandmarks()
@@ -264,9 +293,11 @@ export function useProctoring() {
               setFaceDetected(hasFace);
               setIsFaceMatch(hasFace ? match !== false : false);
               sendHeartbeat(hasFace, hasFace ? match : null);
-            } catch (detErr) {
-              console.error('Main thread detection error:', detErr);
             }
+          } catch (detErr) {
+            console.error('Main thread detection error:', detErr);
+          } finally {
+            mainDetectingRef.current = false;
           }
         }, 3000);
       };
@@ -298,8 +329,8 @@ export function useProctoring() {
       workerRef.current.terminate();
       workerRef.current = null;
       isWorkerReadyRef.current = false;
-      isProcessingFrameRef.current = false;
     }
+    workerBusySinceRef.current = null;
     if (videoRef.current) {
       // Remove the stored play listener to prevent memory leaks
       if (onPlayListenerRef.current) {
