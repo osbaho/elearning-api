@@ -196,6 +196,7 @@ ArcoC/
 │       └── lib/
 │           ├── courseConfig.js    # Configuración de los 30 pasos del curso (títulos, videos, íconos)
 │           ├── api.js             # Llamadas al API con sesión, descargas y formato de fechas
+│           ├── proctoringFrames.js # Qué hace cada ciclo de supervisión con el cuadro (worker, espera o hilo principal)
 │           └── supportCases.js    # Categorías y estados de los reportes (curso y panel)
 │
 └── tests/
@@ -203,7 +204,7 @@ ArcoC/
     │   ├── loginHelper.js         # Utilidad de login y reset para tests
     │   ├── simulatorHelper.js     # Partidas del simulador y avance de pasos vía API
     │   └── adminHelper.js         # Sesión de admin en contexto propio, promociones y matrículas vía API
-    └── e2e/                       # 35 suites Playwright (ver sección 13)
+    └── e2e/                       # 36 suites Playwright (ver sección 13)
 ```
 
 En la raíz del monorepo, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) corre el lint del cliente y la suite E2E sobre SQLite y PostgreSQL (ver sección 13).
@@ -214,6 +215,8 @@ No hay Tailwind ni CSS por componente: todo el estilo vive en [`client/src/app/g
 * **Componentes:** clases propias como `.card`, `.btn`, `.admin-table`, `.modal-backdrop` y `.form-input`.
 * **Utilidades:** clases cortas con la escala del proyecto en px, por ejemplo `.mt-8`, `.p-16`, `.gap-8`, `.flex-wrap`, `.grid-cols-5`, `.font-bold`, `.title-sm`, `.text-red`, `.input` y `.loader`. Van al final del archivo para ganar sobre los estilos de componente con la misma especificidad (p. ej. `.card` + `.p-16`).
 * **Ninguna clase usada en el marcado debe faltar en el CSS.** Hasta noviembre de 2026 faltaban 109 (`flex-wrap`, `grid-cols-5`, `gap-*`, `mt-4`, `font-bold`, `input`…). Por eso el encabezado del panel se aplastaba, las tarjetas de indicadores se apilaban y los campos del admin salían sin estilo. Las que quedan sin definir son ganchos sin estilo propio (`tour-exam`, `tour-progress` para el recorrido guiado) o del estudiante que se revisarán en la Fase 6.
+* **La suite 36 lo verifica:** toda clase escrita en `className` (cadenas y partes fijas de plantillas) debe tener una regla en el CSS. Las únicas excepciones son `tour-exam` y `tour-progress`, que el recorrido guiado del curso usa como selectores. En la Fase 6 se definieron las que faltaban (`hero-title`, `badge`, `badge-cyan`, `atlas-card`, `simulator-frame-wrapper`, `font-sans`, `antialiased`), se quitaron las que no se usaban y el veredicto del estándar IES dejó de usar clases de Tailwind (`bg-green/10`…) que el proyecto no tiene.
+* **Móvil (hasta 640 px):** el encabezado crece a dos líneas en vez de desbordarse y los avisos emergentes van abajo para no taparlo. Hasta 900 px, el menú de módulos del curso pasa arriba como una fila de botones (antes ocupaba 280 px fijos y al contenido le quedaban unos 50 px en un teléfono). El resplandor de la portada (`.hero::after`) no pasa del ancho de la pantalla. La suite 36 comprueba a 390 px que el encabezado no se sale y que la página no se desplaza a lo ancho.
 * **Contenedor ancho:** `.container-wide` (1440 px) para las páginas del admin, que tienen tablas anchas. `.container` no fija `z-index`: así no crea un contexto de apilamiento, y los modales (`z-index` 1050) quedan sobre el encabezado fijo (100).
 
 ---
@@ -599,7 +602,13 @@ La supervisión remota en tiempo real se orquesta entre [`useProctoring.js`](fil
 ### Arquitectura de Supervisión
 1. **Onboarding:** En `/onboarding`, el alumno captura su rostro. face-api genera un descriptor facial (Float32Array de 128 elementos) que se almacena cifrado en base de datos.
 2. **Carga Protegida:** Al iniciar el examen, el cliente consulta `GET /api/student/descriptor` para obtener su descriptor registrado en memoria.
-3. **Bucle Local de Detección:** Cada 3 segundos, el Web Worker [`public/workers/proctoringWorker.js`](client/public/workers/proctoringWorker.js) ejecuta `detectSingleFace().withFaceLandmarks().withFaceDescriptor()` sobre un fotograma de la cámara. Si el worker no está disponible, lo hace el hilo principal.
+3. **Bucle Local de Detección:** Cada 3 segundos, el Web Worker [`public/workers/proctoringWorker.js`](client/public/workers/proctoringWorker.js) ejecuta `detectSingleFace().withFaceLandmarks().withFaceDescriptor()` sobre un fotograma de la cámara. Si el worker no está disponible, lo hace el hilo principal. Qué hace cada ciclo lo decide `frameRoute` ([`src/lib/proctoringFrames.js`](client/src/lib/proctoringFrames.js), función pura):
+   * con el worker libre, se le envía el cuadro;
+   * si sigue con el cuadro anterior, el ciclo se salta. Antes caía al hilo principal, cuyos modelos no estaban cargados, y salía un error en la consola;
+   * si lleva 10 s sin responder, se da por caído y la supervisión sigue en el hilo principal. Sin esto no saldrían más latidos y el servidor suspendería el examen por pérdida de señal;
+   * sin worker (no se pudo crear, falló al iniciar o el navegador no tiene `createImageBitmap`), la detección va al hilo principal, de a un cuadro a la vez y con sus propios modelos.
+
+   El descriptor registrado se pide con un límite de 8 s: si no llega, el examen arranca sin comparar identidad en lugar de quedarse esperando.
 4. **Verificación de Coincidencia:** Se calcula la distancia euclidiana entre el rostro detectado en vivo y el descriptor de referencia:
    $$\text{Distancia} < 0.6 \implies \text{Identidad Confirmada}$$
 5. **Heartbeat WebSocket:** Con el primer latido real (cámara y modelos ya listos) el cliente emite `'start_exam'`, que abre la sesión de supervisión en el servidor; después envía `'proctoring_heartbeat'` cada 3 segundos con `{ faceDetected, isMatch }`. Si no hay descriptor registrado para comparar, `isMatch` viaja como `null` (identidad no evaluable, sin penalización). Tras una reconexión del socket se reabre la sesión.
@@ -1195,10 +1204,10 @@ Microsoft 365 y Google Workspace restringen el SMTP con usuario y contraseña (e
 
 ## 13. Suite de Pruebas Automatizadas (Playwright)
 
-El proyecto cuenta con un conjunto integral de **136 pruebas E2E automatizadas** organizadas en **35 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
+El proyecto cuenta con un conjunto integral de **141 pruebas E2E automatizadas** organizadas en **36 suites especializadas** ejecutadas con Playwright, sobre SQLite y sobre PostgreSQL. Cubre tanto los flujos nominales de certificación como pruebas de caos, penetración, fuzzing de payloads, condiciones de carrera, resiliencia extrema, los dos grandes recorridos completos de usuario (estudiante en una sola sentada y aprendizaje espaciado en múltiples sesiones), la supervisión administrativa por promociones con evaluación del estándar institucional y el conjunto de herramientas de calidad de vida (QoL) y gobernanza ministerial:
 
 ```bash
-# Ejecutar todas las 35 suites E2E (136 pruebas) sobre la base de desarrollo (SQLite)
+# Ejecutar todas las 36 suites E2E (141 pruebas) sobre la base de desarrollo (SQLite)
 npx playwright test
 
 # La misma suite sobre un PostgreSQL 16 desechable (sin Docker; detén antes los servidores de desarrollo)
@@ -1289,6 +1298,7 @@ Las reglas que dependen del tiempo real (visualización mínima de videos y dura
 | **33** | **`33-sqlite-safe-save.test.js`** | **Guardado seguro de la base SQLite** (sobre archivos temporales, nunca sobre `database.sqlite`). El guardado atómico escribe completo, reemplaza la versión anterior y no deja temporales. Cinco guardados simultáneos van en fila y gana el último, y uno que falla no bloquea a los siguientes. Un proceso que escribe 8 MiB sin parar se termina de golpe en tres momentos distintos, y el archivo queda siempre entero, con la versión anterior o la nueva; con la escritura directa de antes quedaba truncado. Una base truncada o un archivo que no es una base se detectan: `node server.js` termina con código 1, explica cómo recuperarse y no modifica el archivo. Un guardado que llega durante una transacción abierta espera a que termine y no la deshace. |
 | **34** | **`34-alert-inbox.test.js`** | **Bandeja de alertas.** Reglas puras: la clave por alerta y paso; el plan de la revisión (alertas nuevas, cambio de detalle, pospuestas que vuelven, alertas que se cierran solas y período de espera); la validación de las decisiones. Por la API: la revisión llena la bandeja sin el estudiante de prueba y sin duplicar entradas con dos revisiones a la vez. Posponer guarda fecha, quién y nota; descartar va a la bitácora. Decidir dos veces da 409, una alerta inexistente 404, una acción inválida 400, y un estudiante no puede decidir (403). La alerta descartada no vuelve durante la espera, y la pospuesta se cierra sola cuando el estudiante aprueba el minijuego. En grupo, las que ya no estaban abiertas se informan sin frenar el resto. En el panel: el contador de la pestaña, posponer con plazo y nota, descartar en grupo y el historial. |
 | **35** | **`35-reinforcement-emails.test.js`** | **Correos de refuerzo.** Reglas puras: las plantillas originales son válidas; validación del asunto, el texto y las variables; variables sin valor como «—»; valores tomados del estudiante y su alerta; la invitación de «Sin activar» sin emitir enlace en la vista previa. Por la API: la vista previa usa la plantilla y los datos del estudiante. Al enviar dos alertas del mismo estudiante, sale una y la otra queda pendiente por el límite de 24 horas (sola responde 429), y el «Recordatorio» de la auditoría también da 429. Quedan el historial con el estado del correo, la ficha y la bitácora, y una alerta enviada no se reenvía (409). A una cuenta desactivada no se le envía, y su alerta se cierra sola. Plantillas: inválidas dan 400, un código sin plantilla 404 y un estudiante 403; la editada se usa en la vista previa con datos de muestra y en el correo real, y se restaura el original con su bitácora. En el panel: vista previa y envío, el historial y el editor (vista previa, guardar y restaurar). |
+| **36** | **`36-student-fixes.test.js`** | **Correcciones del perfil del estudiante (Fase 6).** La ruta de cada cuadro de la supervisión (worker libre, worker ocupado, worker caído, sin worker y detección en curso). Toda clase del marcado tiene estilos, salvo los ganchos del recorrido guiado. En la práctica, el subtítulo queda alineado con el título. A 390 px, el encabezado del estudiante y del admin no se desborda y la página no se desplaza a lo ancho. Y un examen con la cámara simulada del navegador (sin `skipCamera`): la supervisión analiza cuadros («Rostro no detectado») sin errores del hilo principal en la consola. |
 
 ---
 

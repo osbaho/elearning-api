@@ -52,7 +52,6 @@ export function formatDateTime(value) {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('es-CO');
 }
 
-/** 'AAAA-MM-DD' → 'DD/MM/AAAA'. */
 /** «hace 5 min», «hace 3 h», «hace 2 días»: para columnas angostas (la fecha exacta va en un title). */
 export function formatRelative(value, now = Date.now()) {
   if (!value) return '—';
@@ -67,6 +66,7 @@ export function formatRelative(value, now = Date.now()) {
   return days === 1 ? 'hace 1 día' : `hace ${days} días`;
 }
 
+/** 'AAAA-MM-DD' → 'DD/MM/AAAA'. */
 export function formatDay(isoDate) {
   if (!isoDate) return '—';
   const [y, m, d] = String(isoDate).slice(0, 10).split('-');

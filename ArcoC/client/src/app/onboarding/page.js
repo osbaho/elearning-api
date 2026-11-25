@@ -262,7 +262,7 @@ export default function OnboardingPage() {
 
             <div className="grid-onboarding-step2 gap-24 mb-24 items-center">
               
-              <div className="instructions bg-dark-light p-20 radius-lg border-cyan-transparent">
+              <div className="bg-dark-light p-20 radius-lg border-cyan-transparent">
                 <h3 className="text-light mb-12 flex items-center gap-8">
                   <span className="text-cyan">📷</span> Consejos de Captura
                 </h3>

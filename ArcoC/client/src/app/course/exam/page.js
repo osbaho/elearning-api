@@ -440,7 +440,7 @@ export default function ExamPage() {
                   </div>
                 </div>
               ) : (
-                <div id="exam-main-screen" className="exam-active-content">
+                <div id="exam-main-screen">
                   {focusLossWarning && (
                     <div id="focus-overlay" className="focus-overlay">
                       <div className="focus-overlay-modal">
