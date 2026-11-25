@@ -4,6 +4,7 @@ import { authenticateToken, requireAdmin } from '../middleware/auth.js';
 import { logAdminAction } from '../services/adminActions.js';
 import { sendStepReopenedEmail } from '../services/emailService.js';
 import { ReopenError, reopenStep } from '../services/reopen.js';
+import { notifyStudent } from '../services/studentNotifications.js';
 
 /**
  * Reintentos auditados (Fase 4).
@@ -41,6 +42,7 @@ router.post('/students/:id/reopen', async (req, res) => {
         reason,
         details: { stepId, ...changed, ...(Number.isInteger(caseId) && caseId > 0 ? { caseId } : {}) },
       }, tx);
+      await notifyStudent(student.id, changed.kind === 'exam' ? 'exam_attempt_granted' : 'step_reopened', { stepId, reason }, tx);
       return changed;
     });
 

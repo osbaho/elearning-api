@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '../../context/AuthContext';
 import ProtectedRoute from '../../components/ProtectedRoute';
+import NotificationsBell from '../../components/NotificationsBell';
 
 export default function CourseLayout({ children }) {
   const { logout, user } = useAuth();
@@ -22,6 +23,7 @@ export default function CourseLayout({ children }) {
             <Link href="/course" className={pathname === '/course' ? 'active' : ''}>Curso</Link>
             <Link href="/course/progreso" id="nav-my-progress" className={pathname === '/course/progreso' ? 'active' : ''}>Mi progreso</Link>
             <Link href="/course/ayuda" id="nav-faq" className={pathname === '/course/ayuda' ? 'active' : ''}>Ayuda</Link>
+            {!isAdmin && user && <NotificationsBell />}
             <button onClick={logout} className="btn-logout" aria-label="Cerrar sesión">Cerrar sesión</button>
             {isAdmin ? (
               <Link href="/admin" id="nav-back-admin" className="nav-points" aria-label="Volver al panel del administrador">
